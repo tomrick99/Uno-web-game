@@ -1,0 +1,31 @@
+# Build output
+target/
+*/target/
+**/target/
+*.class
+
+# IDE
+.idea/
+**/.idea/
+*.iml
+.codebuddy/
+
+# Environment and local config
+.env
+.env.*
+!.env.example
+application-local.properties
+backend/src/main/resources/application-local.properties
+*/application-local.properties
+
+
+# Logs
+logs/
+*.log
+
+# Node / frontend tooling
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db

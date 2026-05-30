@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UNO - 对局</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.5.0/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs@7.0.1/dist/stomp.umd.min.js"></script>
+    <link rel="stylesheet" href="css/common.css">
+    <link rel="stylesheet" href="css/game.css">
+</head>
+<body>
+    <div id="app">
+        <div class="bg-animation">
+            <div class="circle c1"></div>
+            <div class="circle c2"></div>
+            <div class="circle c3"></div>
+        </div>
+
+        <header class="game-top-bar">
+            <div class="game-info">
+                <span class="room-code">房间: {{ roomCode || roomId }}</span>
+                <span class="turn-indicator" :class="{ 'my-turn': isMyTurn }">{{ turnLabel }}</span>
+            </div>
+            <div class="status-panel">
+                <div class="status-chip connection" :class="{ offline: !wsConnected }">
+                    <span class="status-dot"></span>
+                    <span>{{ connectionLabel }}</span>
+                </div>
+                <div class="status-chip">
+                    <span class="status-label">方向</span>
+                    <span>{{ directionLabel }}</span>
+                </div>
+                <div class="status-chip color-chip">
+                    <span class="status-label">当前颜色</span>
+                    <span class="current-color" :style="{ background: colorMap[currentColor] || '#777' }"></span>
+                    <span>{{ currentColorLabel }}</span>
+                </div>
+                <button id="backToLobbyButton" class="top-action-btn" :disabled="leavingRoom">返回大厅</button>
+            </div>
+        </header>
+
+        <section class="opponents-area">
+            <div
+                v-for="player in opponents"
+                :key="player.userId"
+                class="opponent"
+                :class="{ 'current-turn': String(player.userId) === String(currentTurn) }"
+            >
+                <div class="opponent-avatar">{{ player.username.charAt(0).toUpperCase() }}</div>
+                <div class="opponent-name">{{ player.username }}</div>
+                <div class="opponent-cards">
+                    <div class="card-back-small" v-for="n in player.handCount" :key="n"></div>
+                </div>
+                <div class="uno-badge" v-if="player.saidUno">UNO!</div>
+            </div>
+        </section>
+
+        <section class="game-center">
+            <div
+                class="draw-pile"
+                :class="{ disabled: !canDraw }"
+                :title="canDraw ? '可以抽牌' : '不是你的回合，不能抽牌'"
+                @click="drawCardAction"
+            >
+                <div class="card card-back draw-card">
+                    <div class="card-back-design">UNO</div>
+                    <div class="draw-count">{{ drawPileSize }}</div>
+                </div>
+                <div class="pile-label">{{ canDraw ? '点击抽牌' : '抽牌堆' }}</div>
+            </div>
+
+            <div class="discard-pile">
+                <div v-if="topCard" class="card" :class="[topCard.color.toLowerCase(), 'large']">
+                    <div class="card-corner top-left">{{ topCard.display }}</div>
+                    <div class="card-center">{{ topCard.display }}</div>
+                    <div class="card-corner bottom-right">{{ topCard.display }}</div>
+                </div>
+                <div v-else class="card-placeholder">等待开始...</div>
+                <div class="pile-label">弃牌堆</div>
+            </div>
+        </section>
+
+        <section class="my-hand-area">
+            <div class="hand-cards">
+                <div
+                    v-for="(card, idx) in handCards"
+                    :key="`${card.color}-${card.type}-${card.value}-${idx}`"
+                    class="card"
+                    :class="[card.color.toLowerCase(), card.stateClass, { selected: selectedCard === idx }]"
+                    :title="card.hint"
+                    @click="selectCard(idx)"
+                >
+                    <div class="card-corner top-left">{{ card.display }}</div>
+                    <div class="card-center">{{ card.display }}</div>
+                    <div class="card-corner bottom-right">{{ card.display }}</div>
+                </div>
+            </div>
+
+            <div class="action-buttons" v-if="selectedCard !== null">
+                <button id="playSelectedCardButton" class="btn-play" :disabled="!canPlaySelected" @click="playSelectedCard">
+                    出牌
+                </button>
+                <button v-if="needsColorPick" class="btn-color-pick" @click="pickColor('RED')">红</button>
+                <button v-if="needsColorPick" class="btn-color-pick blue" @click="pickColor('BLUE')">蓝</button>
+                <button v-if="needsColorPick" class="btn-color-pick green" @click="pickColor('GREEN')">绿</button>
+                <button v-if="needsColorPick" class="btn-color-pick yellow" @click="pickColor('YELLOW')">黄</button>
+            </div>
+
+            <div v-if="showPenaltyNotice" class="penalty-panel">
+                <div class="penalty-text">{{ penaltyNoticeText }}</div>
+                <button
+                    v-if="showDrawPenaltyButton"
+                    id="drawPenaltyButton"
+                    class="btn-primary"
+                    :disabled="drawingPenalty"
+                >
+                    {{ drawPenaltyButtonText }}
+                </button>
+            </div>
+        </section>
+
+        <div class="game-log" :class="{ expanded: logExpanded }">
+            <div class="log-toggle" @click="logExpanded = !logExpanded">游戏日志</div>
+            <div class="log-content" v-if="logExpanded">
+                <div class="log-item" v-for="(log, idx) in gameLog" :key="idx">{{ log }}</div>
+            </div>
+        </div>
+
+        <div v-if="gameResult" class="modal-overlay">
+            <div class="modal-card result-card">
+                <h2 :class="{ win: gameResult.win, lose: !gameResult.win }">{{ gameResult.title }}</h2>
+                <p class="result-subtitle">
+                    {{ gameResult.win ? '本局获胜，准备再来一局吗？' : '本局结束，你可以返回大厅或立即再来一局。' }}
+                </p>
+                <p v-if="gameResult.statusText" class="result-status">{{ gameResult.statusText }}</p>
+                <div class="result-actions">
+                    <button id="endReturnLobbyBtn" class="btn-secondary">返回大厅</button>
+                    <button id="restartGameBtn" class="btn-primary" :disabled="gameResult.rematchButtonDisabled || restartingGame">
+                        {{ gameResult.rematchButtonText }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="toastMsg" class="toast-msg">{{ toastMsg }}</div>
+    </div>
+
+    <script src="js/pages/game.js"></script>
+</body>
+</html>

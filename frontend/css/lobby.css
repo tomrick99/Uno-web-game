@@ -1,0 +1,249 @@
+.top-bar {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 40px;
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.logo-small {
+    font-size: 36px;
+    font-weight: 900;
+    background: linear-gradient(135deg, var(--red), var(--yellow));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: 5px;
+}
+
+.user-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.username {
+    color: var(--text-secondary);
+    font-size: 16px;
+}
+
+.btn-admin,
+.btn-logout {
+    padding: 8px 18px;
+    border-radius: 8px;
+    color: white;
+    font-size: 14px;
+}
+
+.btn-admin {
+    background: rgba(52, 152, 219, 0.24);
+}
+
+.btn-logout {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.lobby-main {
+    position: relative;
+    z-index: 1;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 40px 20px;
+}
+
+.lobby-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 30px;
+}
+
+.lobby-header h2 {
+    font-size: 32px;
+    font-weight: 700;
+}
+
+.btn-create {
+    padding: 12px 30px;
+    background: linear-gradient(135deg, var(--green), #27ae60);
+    color: white;
+    font-size: 16px;
+    font-weight: bold;
+    border-radius: 12px;
+}
+
+.room-list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.empty-tip {
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 18px;
+    padding: 60px 0;
+    opacity: 0.7;
+}
+
+.room-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 30px;
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    cursor: pointer;
+    transition: all 0.25s ease;
+}
+
+.room-card:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateX(5px);
+}
+
+.room-info {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.room-code {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--yellow);
+    letter-spacing: 3px;
+}
+
+.room-status {
+    font-size: 13px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    width: fit-content;
+}
+
+.room-status.waiting {
+    background: rgba(46, 204, 113, 0.2);
+    color: var(--green);
+}
+
+.room-status.playing {
+    background: rgba(231, 76, 60, 0.2);
+    color: var(--red);
+}
+
+.room-action {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.room-players {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.btn-join {
+    padding: 8px 25px;
+    background: linear-gradient(135deg, var(--blue), #2980b9);
+    color: white;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+
+.modal-card {
+    background: var(--bg-dark2);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    padding: 40px;
+    width: 90%;
+    max-width: 400px;
+}
+
+.modal-card h3 {
+    font-size: 24px;
+    margin-bottom: 30px;
+    text-align: center;
+}
+
+.modal-body {
+    margin-bottom: 30px;
+}
+
+.modal-body label {
+    display: block;
+    margin-bottom: 10px;
+    color: var(--text-secondary);
+}
+
+.modal-body select {
+    width: 100%;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    color: var(--text-primary);
+    font-size: 16px;
+}
+
+.modal-actions {
+    display: flex;
+    gap: 15px;
+}
+
+.btn-cancel,
+.btn-primary {
+    flex: 1;
+    padding: 12px;
+    border-radius: 10px;
+    font-size: 16px;
+}
+
+.btn-cancel {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--red), var(--yellow));
+    color: white;
+    font-weight: bold;
+}
+
+.toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 15px 30px;
+    border-radius: 12px;
+    font-size: 14px;
+    z-index: 200;
+}
+
+.toast.error {
+    background: rgba(231, 76, 60, 0.9);
+    color: white;
+}
+
+.toast.info {
+    background: rgba(52, 152, 219, 0.92);
+    color: white;
+}

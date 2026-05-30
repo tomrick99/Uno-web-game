@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Uno - 游戏大厅</title>
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.5.0/dist/axios.min.js"></script>
+    <link rel="stylesheet" href="css/common.css">
+    <link rel="stylesheet" href="css/lobby.css">
+</head>
+<body>
+    <div id="app">
+        <div class="bg-animation">
+            <div class="circle c1"></div>
+            <div class="circle c2"></div>
+            <div class="circle c3"></div>
+        </div>
+
+        <header class="top-bar">
+            <div class="logo-small">UNO</div>
+            <div class="user-info">
+                <span class="username">{{ username }}</span>
+                <button v-if="isAdmin" class="btn-admin" @click="goToAdmin">管理员</button>
+                <button class="btn-logout" @click="logout">退出</button>
+            </div>
+        </header>
+
+        <main class="lobby-main">
+            <div class="lobby-header">
+                <h2>游戏大厅</h2>
+                <button class="btn-create" @click="showCreate = true">+ 创建房间</button>
+            </div>
+
+            <div class="room-list">
+                <div v-if="rooms.length === 0" class="empty-tip">暂无可加入房间，创建一个试试吧。</div>
+                <div v-else class="room-card" v-for="room in rooms" :key="room.id" @click="joinRoom(room)">
+                    <div class="room-info">
+                        <span class="room-code">{{ room.roomCode }}</span>
+                        <span class="room-status" :class="room.status.toLowerCase()">
+                            {{ room.status === 'WAITING' ? '等待中' : '游戏中' }}
+                        </span>
+                    </div>
+                    <div class="room-action">
+                        <span class="room-players">房主: {{ room.host?.username || '未知' }}</span>
+                        <button class="btn-join">加入</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <div v-if="showCreate" class="modal-overlay" @click.self="showCreate = false">
+            <div class="modal-card">
+                <h3>创建房间</h3>
+                <div class="modal-body">
+                    <label>人数上限</label>
+                    <select v-model.number="maxPlayers">
+                        <option :value="2">2 人</option>
+                        <option :value="3">3 人</option>
+                        <option :value="4">4 人</option>
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn-cancel" @click="showCreate = false">取消</button>
+                    <button class="btn-primary" @click="createRoom">创建</button>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="errorMsg" class="toast error">{{ errorMsg }}</div>
+        <div v-if="infoMsg" class="toast info">{{ infoMsg }}</div>
+    </div>
+
+    <script src="js/pages/lobby.js"></script>
+</body>
+</html>

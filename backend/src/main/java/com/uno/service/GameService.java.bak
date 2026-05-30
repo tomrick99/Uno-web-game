@@ -1,0 +1,395 @@
+package com.uno.service;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.uno.entity.*;
+import com.uno.entity.enums.*;
+import com.uno.model.Card;
+import com.uno.model.Deck;
+import com.uno.repository.GamePlayerRepository;
+import com.uno.repository.GameRepository;
+import com.uno.repository.RoomRepository;
+import com.uno.repository.UserRepository;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.util.*;
+
+/**
+ * 核心游戏逻辑服务
+ */
+@Service
+@Transactional
+public class GameService {
+
+    private final GameRepository gameRepository;
+    private final GamePlayerRepository gamePlayerRepository;
+    private final RoomRepository roomRepository;
+    private final UserRepository userRepository;
+    private final ObjectMapper objectMapper;
+
+    // 内存中保存游戏牌堆（游戏ID -> Deck）
+    private final Map<Long, Deck> gameDecks = new HashMap<>();
+
+    public GameService(GameRepository gameRepository,
+                       GamePlayerRepository gamePlayerRepository,
+                       RoomRepository roomRepository,
+                       UserRepository userRepository,
+                       ObjectMapper objectMapper) {
+        this.gameRepository = gameRepository;
+        this.gamePlayerRepository = gamePlayerRepository;
+        this.roomRepository = roomRepository;
+        this.userRepository = userRepository;
+        this.objectMapper = objectMapper;
+    }
+
+    /**
+     * 玩家加入游戏（创建或加入现有游戏）
+     */
+    public GamePlayer joinGame(Long roomId, Long userId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("房间不存在"));
+
+        // 查找或创建 Game
+        Game game = gameRepository.findByRoom(room).stream()
+                .findFirst()
+                .orElseGet(() -> {
+                    Game g = new Game();
+                    g.setRoom(room);
+                    g.setStatus(GameStatus.WAITING);
+                    return gameRepository.save(g);
+                });
+
+        // 检查玩家是否已在游戏中
+        List<GamePlayer> existingPlayers = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        Optional<GamePlayer> existing = existingPlayers.stream()
+                .filter(gp -> gp.getUser().getId().equals(userId))
+                .findFirst();
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+
+        // 检查人数上限
+        if (existingPlayers.size() >= room.getMaxPlayers()) {
+            throw new IllegalStateException("房间已满");
+        }
+
+        // 添加新玩家
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
+        GamePlayer player = new GamePlayer(game, user, existingPlayers.size());
+        player.setHandCardsJson("[]");
+        gamePlayerRepository.save(player);
+
+        // 两人都加入后开始游戏
+        long playerCount = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game).size();
+        if (playerCount >= 2 && game.getStatus() == GameStatus.WAITING) {
+            startGame(game);
+        }
+
+        return player;
+    }
+
+    /**
+     * 开始游戏：洗牌、发牌
+     */
+    private void startGame(Game game) {
+        game.setStatus(GameStatus.PLAYING);
+        game.setCurrentTurn(0);
+        game.setClockwise(true);
+
+        Deck deck = new Deck();
+        gameDecks.put(game.getId(), deck);
+
+        // 发 7 张牌给每个玩家
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        for (GamePlayer player : players) {
+            List<Card> hand = new ArrayList<>();
+            for (int i = 0; i < 7; i++) {
+                hand.add(deck.drawCard());
+            }
+            player.setHandCardsJson(toJson(hand));
+            gamePlayerRepository.save(player);
+        }
+
+        // 翻第一张弃牌堆的牌
+        Card firstCard = deck.drawCard();
+        // 如果第一张是万能牌，随机指定一个颜色
+        if (firstCard.type() == CardType.WILD || firstCard.type() == CardType.WILD_DRAW_FOUR) {
+            CardColor[] colors = {CardColor.RED, CardColor.BLUE, CardColor.GREEN, CardColor.YELLOW};
+            firstCard = new Card(colors[new Random().nextInt(colors.length)], firstCard.type(), firstCard.value());
+        }
+        deck.discard(firstCard);
+        game.setCurrentColor(firstCard.color());
+        game.setCurrentValue(String.valueOf(firstCard.value()));
+
+        // 保存牌堆状态
+        saveDeckState(game, deck);
+        gameRepository.save(game);
+    }
+
+    /**
+     * 玩家出牌
+     */
+    public Card playCard(Long gameId, Long userId, int cardIndex, CardColor chosenColor) {
+        Game game = gameRepository.findById(gameId)
+                .orElseThrow(() -> new IllegalArgumentException("游戏不存在"));
+        Deck deck = gameDecks.get(game.getId());
+        if (deck == null) {
+            throw new IllegalStateException("游戏未初始化");
+        }
+
+        // 验证是否是当前玩家
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        GamePlayer currentPlayer = players.get(game.getCurrentTurn());
+        if (!currentPlayer.getUser().getId().equals(userId)) {
+            throw new IllegalStateException("不是你的回合");
+        }
+
+        // 获取玩家手牌
+        List<Card> hand = fromJson(currentPlayer.getHandCardsJson());
+        if (cardIndex < 0 || cardIndex >= hand.size()) {
+            throw new IllegalArgumentException("无效的卡牌索引");
+        }
+
+        Card cardToPlay = hand.get(cardIndex);
+        Card topCard = deck.getTopDiscard();
+
+        // 验证出牌合法性
+        if (!cardToPlay.canPlayOn(topCard, game.getCurrentColor())) {
+            throw new IllegalArgumentException("这张牌不能出");
+        }
+
+        // 出牌
+        hand.remove(cardIndex);
+        currentPlayer.setHandCardsJson(toJson(hand));
+
+        // 处理万能牌颜色
+        CardColor effectiveColor = cardToPlay.color();
+        if (cardToPlay.type() == CardType.WILD || cardToPlay.type() == CardType.WILD_DRAW_FOUR) {
+            if (chosenColor == null) {
+                throw new IllegalArgumentException("万能牌必须选择颜色");
+            }
+            effectiveColor = chosenColor;
+        }
+
+        deck.discard(new Card(effectiveColor, cardToPlay.type(), cardToPlay.value()));
+        game.setCurrentColor(effectiveColor);
+        game.setCurrentValue(String.valueOf(cardToPlay.value()));
+
+        // 检查胜负
+        if (hand.isEmpty()) {
+            game.setStatus(GameStatus.FINISHED);
+            game.setWinner(currentPlayer.getUser());
+            game.setFinishedAt(LocalDateTime.now());
+            gameRepository.save(game);
+            saveDeckState(game, deck);
+            return cardToPlay;
+        }
+
+        // 执行功能牌效果
+        applyCardEffect(game, cardToPlay, players);
+
+        // 保存状态
+        gamePlayerRepository.save(currentPlayer);
+        gameRepository.save(game);
+        saveDeckState(game, deck);
+
+        return cardToPlay;
+    }
+
+    /**
+     * 玩家摸牌
+     */
+    public Card drawCard(Long gameId, Long userId) {
+        Game game = gameRepository.findById(gameId)
+                .orElseThrow(() -> new IllegalArgumentException("游戏不存在"));
+        Deck deck = gameDecks.get(game.getId());
+
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        GamePlayer currentPlayer = players.get(game.getCurrentTurn());
+        if (!currentPlayer.getUser().getId().equals(userId)) {
+            throw new IllegalStateException("不是你的回合");
+        }
+
+        Card drawn = deck.drawCard();
+        if (drawn == null) {
+            throw new IllegalStateException("无牌可摸");
+        }
+
+        List<Card> hand = fromJson(currentPlayer.getHandCardsJson());
+        hand.add(drawn);
+        currentPlayer.setHandCardsJson(toJson(hand));
+        gamePlayerRepository.save(currentPlayer);
+
+        // 摸牌后跳过回合
+        nextTurn(game, players);
+        gameRepository.save(game);
+        saveDeckState(game, deck);
+
+        return drawn;
+    }
+
+    /**
+     * 应用功能牌效果
+     */
+    private void applyCardEffect(Game game, Card card, List<GamePlayer> players) {
+        int totalPlayers = players.size();
+        switch (card.type()) {
+            case SKIP:
+                // 跳过下家
+                nextTurn(game, players);
+                break;
+            case REVERSE:
+                // 反转方向
+                game.setClockwise(!game.isClockwise());
+                break;
+            case DRAW_TWO:
+                // 下家摸 2 张牌并跳过
+                nextTurn(game, players);
+                GamePlayer next = players.get(game.getCurrentTurn());
+                List<Card> nextHand = fromJson(next.getHandCardsJson());
+                Deck d2 = gameDecks.get(game.getId());
+                nextHand.add(d2.drawCard());
+                nextHand.add(d2.drawCard());
+                next.setHandCardsJson(toJson(nextHand));
+                gamePlayerRepository.save(next);
+                // 再跳一次
+                nextTurn(game, players);
+                return;
+            case WILD_DRAW_FOUR:
+                // 下家摸 4 张牌并跳过
+                nextTurn(game, players);
+                GamePlayer target = players.get(game.getCurrentTurn());
+                List<Card> targetHand = fromJson(target.getHandCardsJson());
+                Deck d4 = gameDecks.get(game.getId());
+                for (int i = 0; i < 4; i++) {
+                    targetHand.add(d4.drawCard());
+                }
+                target.setHandCardsJson(toJson(targetHand));
+                gamePlayerRepository.save(target);
+                nextTurn(game, players);
+                return;
+            default:
+                break;
+        }
+        nextTurn(game, players);
+    }
+
+    /**
+     * 切换到下一个回合
+     */
+    private void nextTurn(Game game, List<GamePlayer> players) {
+        int total = players.size();
+        if (game.isClockwise()) {
+            game.setCurrentTurn((game.getCurrentTurn() + 1) % total);
+        } else {
+            game.setCurrentTurn((game.getCurrentTurn() - 1 + total) % total);
+        }
+    }
+
+    /**
+     * 获取游戏状态（给前端同步）
+     */
+    public Map<String, Object> getGameState(Long gameId) {
+        Game game = gameRepository.findById(gameId)
+                .orElseThrow(() -> new IllegalArgumentException("游戏不存在"));
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        Deck deck = gameDecks.get(game.getId());
+
+        Map<String, Object> state = new HashMap<>();
+        state.put("gameId", game.getId());
+        state.put("status", game.getStatus().name());
+        state.put("currentTurn", game.getCurrentTurn());
+        state.put("clockwise", game.isClockwise());
+        state.put("currentColor", game.getCurrentColor().name());
+        state.put("drawPileSize", deck != null ? deck.getDrawPileSize() : 0);
+
+        // 顶部卡牌
+        if (deck != null && deck.getTopDiscard() != null) {
+            Card top = deck.getTopDiscard();
+            Map<String, Object> topCard = new HashMap<>();
+            topCard.put("color", top.color().name());
+            topCard.put("type", top.type().name());
+            topCard.put("value", top.value());
+            state.put("topCard", topCard);
+        }
+
+        // 玩家信息
+        List<Map<String, Object>> playerInfos = new ArrayList<>();
+        for (GamePlayer gp : players) {
+            Map<String, Object> info = new HashMap<>();
+            info.put("username", gp.getUser().getUsername());
+            info.put("seatIndex", gp.getSeatIndex());
+            info.put("handCount", fromJson(gp.getHandCardsJson()).size());
+            info.put("saidUno", gp.isSaidUno());
+            playerInfos.add(info);
+        }
+        state.put("players", playerInfos);
+
+        return state;
+    }
+
+    /**
+     * 获取玩家手牌（仅自己）
+     */
+    public List<Map<String, Object>> getPlayerHand(Long gameId, Long userId) {
+        Game game = gameRepository.findById(gameId)
+                .orElseThrow(() -> new IllegalArgumentException("游戏不存在"));
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+
+        Optional<GamePlayer> playerOpt = players.stream()
+                .filter(gp -> gp.getUser().getId().equals(userId))
+                .findFirst();
+        if (playerOpt.isEmpty()) {
+            throw new IllegalArgumentException("玩家不在游戏中");
+        }
+
+        List<Card> hand = fromJson(playerOpt.get().getHandCardsJson());
+        List<Map<String, Object>> result = new ArrayList<>();
+        Deck deck = gameDecks.get(game.getId());
+        Card topDiscard = deck != null ? deck.getTopDiscard() : null;
+        CardColor currentColor = game.getCurrentColor();
+
+        for (int i = 0; i < hand.size(); i++) {
+            Card c = hand.get(i);
+            Map<String, Object> cardMap = new HashMap<>();
+            cardMap.put("index", i);
+            cardMap.put("color", c.color().name());
+            cardMap.put("type", c.type().name());
+            cardMap.put("value", c.value());
+            cardMap.put("display", c.getDisplayName());
+            cardMap.put("playable", topDiscard != null && c.canPlayOn(topDiscard, currentColor));
+            result.add(cardMap);
+        }
+        return result;
+    }
+
+    // ========== JSON 工具方法 ==========
+
+    private String toJson(Object obj) {
+        try {
+            return objectMapper.writeValueAsString(obj);
+        } catch (Exception e) {
+            throw new RuntimeException("JSON 序列化失败", e);
+        }
+    }
+
+    private List<Card> fromJson(String json) {
+        if (json == null || json.isEmpty() || json.equals("null")) {
+            return new ArrayList<>();
+        }
+        try {
+            return objectMapper.readValue(json, new TypeReference<List<Card>>() {});
+        } catch (Exception e) {
+            return new ArrayList<>();
+        }
+    }
+
+    private void saveDeckState(Game game, Deck deck) {
+        // 将牌堆序列化为 JSON 存储（用于持久化）
+        game.setDrawPileJson(toJson(deck.getDrawPile()));
+        game.setDiscardPileJson(toJson(deck.getDiscardPile()));
+    }
+}
