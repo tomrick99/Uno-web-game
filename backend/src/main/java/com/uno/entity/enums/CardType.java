@@ -1,10 +1,16 @@
 package com.uno.entity.enums;
 
 public enum CardType {
-    NUMBER,         // 数字牌 (0-9)
-    SKIP,           // 跳过牌
-    REVERSE,        // 反转牌
-    DRAW_TWO,       // +2 牌
-    WILD,           // 换色牌
-    WILD_DRAW_FOUR  // +4 牌
+    NUMBER,
+    SKIP,
+    REVERSE,
+    DRAW_TWO,
+    DRAW_FOUR,
+    DISCARD_ALL_COLOR,
+    SKIP_ALL,
+    WILD,
+    WILD_DRAW_FOUR,
+    WILD_DRAW_SIX,
+    WILD_DRAW_TEN,
+    WILD_REVERSE_DRAW_FOUR
 }

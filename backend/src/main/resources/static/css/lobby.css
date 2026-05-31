@@ -31,12 +31,19 @@
     font-size: 16px;
 }
 
+.lang-toggle,
 .btn-admin,
 .btn-logout {
     padding: 8px 18px;
     border-radius: 8px;
     color: white;
     font-size: 14px;
+}
+
+.lang-toggle {
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    min-width: 58px;
 }
 
 .btn-admin {
@@ -138,6 +145,20 @@
     color: var(--red);
 }
 
+.room-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.room-meta span {
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
 .room-action {
     display: flex;
     align-items: center;
@@ -171,10 +192,10 @@
 .modal-card {
     background: var(--bg-dark2);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 20px;
-    padding: 40px;
+    border-radius: 8px;
+    padding: 32px;
     width: 90%;
-    max-width: 400px;
+    max-width: 430px;
 }
 
 .modal-card h3 {
@@ -184,23 +205,53 @@
 }
 
 .modal-body {
+    display: grid;
+    gap: 12px;
     margin-bottom: 30px;
 }
 
 .modal-body label {
     display: block;
-    margin-bottom: 10px;
+    margin-top: 6px;
+    margin-bottom: 0;
     color: var(--text-secondary);
 }
 
-.modal-body select {
-    width: 100%;
-    padding: 12px;
+.option-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.option-grid.compact {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.mode-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.option-chip {
+    min-height: 42px;
+    padding: 9px 10px;
+    border-radius: 8px;
     background: rgba(255, 255, 255, 0.08);
-    border: 2px solid rgba(255, 255, 255, 0.1);
-    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
     color: var(--text-primary);
-    font-size: 16px;
+    font-size: 14px;
+    font-weight: 700;
+    transition: all 0.18s;
+}
+
+.option-chip:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.28);
+}
+
+.option-chip.active {
+    background: linear-gradient(135deg, var(--green), #27ae60);
+    border-color: rgba(255, 255, 255, 0.44);
+    box-shadow: 0 8px 20px rgba(46, 204, 113, 0.22);
 }
 
 .modal-actions {
@@ -246,4 +297,25 @@
 .toast.info {
     background: rgba(52, 152, 219, 0.92);
     color: white;
+}
+
+@media (max-width: 640px) {
+    .top-bar,
+    .lobby-header,
+    .room-card,
+    .room-action {
+        gap: 12px;
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .user-info {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
+    .option-grid,
+    .option-grid.compact {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }

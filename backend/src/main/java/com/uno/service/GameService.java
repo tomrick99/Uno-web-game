@@ -7,6 +7,7 @@ import com.uno.entity.User;
 import com.uno.entity.enums.CardColor;
 import com.uno.entity.enums.CardType;
 import com.uno.entity.enums.GameStatus;
+import com.uno.entity.enums.GameMode;
 import com.uno.entity.enums.PendingDrawType;
 import com.uno.entity.enums.RoomStatus;
 import com.uno.model.Card;
@@ -154,6 +155,9 @@ public class GameService {
         state.put("roomCode", game.getRoom().getRoomCode());
         state.put("roomStatus", game.getRoom().getStatus().name());
         state.put("maxPlayers", game.getRoom().getMaxPlayers());
+        state.put("totalRounds", game.getRoom().getTotalRounds());
+        state.put("roundTimeLimitMinutes", game.getRoom().getRoundTimeLimitMinutes());
+        state.put("gameMode", resolveGameMode(game).name());
         state.put("status", game.getStatus().name());
         Card topCard = getTopDiscard(game);
         CardColor effectiveColor = resolveCurrentColor(game.getCurrentColor(), topCard);
@@ -314,7 +318,7 @@ public class GameService {
             logUnoPlay(userId, card, topCard, effectiveColor, game.getPendingDrawCount(), true, false, validation.reason(), game.getCurrentTurn());
             throw new IllegalArgumentException("这张牌当前不能出");
         }
-        if ((card.type() == CardType.WILD || card.type() == CardType.WILD_DRAW_FOUR)
+        if (requiresColorSelection(card)
                 && (chosenColor == null || chosenColor == CardColor.WILD)) {
             throw new IllegalArgumentException("请选择颜色");
         }
@@ -329,14 +333,15 @@ public class GameService {
         discardPile.add(card);
         game.setDiscardPileJson(toJson(discardPile));
 
-        boolean handledTurnAdvance = processCardEffect(game, card, chosenColor, userId);
+        boolean handledTurnAdvance = processCardEffect(game, player, card, chosenColor, userId);
         if (!handledTurnAdvance) {
             moveToNextPlayer(game);
         }
         gameRepository.save(game);
         logUnoPlay(userId, card, topCard, effectiveColor, game.getPendingDrawCount(), true, true, "accepted", game.getCurrentTurn());
 
-        if (hand.isEmpty()) {
+        List<Card> remainingHand = player.getHandCards();
+        if (remainingHand.isEmpty()) {
             game.setStatus(GameStatus.FINISHED);
             gameRepository.save(game);
             roomService.closeRoom(game.getRoom());
@@ -578,7 +583,7 @@ public class GameService {
     }
 
     private void startGame(Game game) {
-        Deck deck = new Deck();
+        Deck deck = new Deck(resolveGameMode(game));
         game.setStatus(GameStatus.PLAYING);
         game.setClockwise(true);
         clearPendingDraw(game);
@@ -623,7 +628,20 @@ public class GameService {
         if (card == null || card.color() == null || card.type() == null) {
             return new PlayValidation(false, "invalid card");
         }
+        if (!isNoMercy(game) && isNoMercyOnlyCard(card)) {
+            logCanPlay(card, topCard, currentColor, game, false, "No Mercy card is not allowed in Classic");
+            return new PlayValidation(false, "No Mercy card is not allowed in Classic");
+        }
         if (hasPendingDraw(game)) {
+            if (isNoMercy(game)) {
+                if (canStackNoMercyPenalty(card, topCard)) {
+                    logCanPlay(card, topCard, currentColor, game, true, "pending draw allows equal or higher draw penalty card");
+                    return new PlayValidation(true, "pending draw allows equal or higher draw penalty card");
+                }
+                logCanPlay(card, topCard, currentColor, game, false, "pending draw only allows equal or higher draw penalty cards");
+                return new PlayValidation(false, "pending draw only allows equal or higher draw penalty cards");
+            }
+
             if (isWildDrawFourChain(game)) {
                 if (card.type() == CardType.WILD_DRAW_FOUR) {
                     logCanPlay(card, topCard, currentColor, game, true, "pending +4 chain allows +4");
@@ -645,13 +663,9 @@ public class GameService {
             return new PlayValidation(false, "pending +2 chain only allows +2 or +4");
         }
 
-        if (card.type() == CardType.WILD) {
+        if (isWildCard(card)) {
             logCanPlay(card, topCard, currentColor, game, true, "wild card");
             return new PlayValidation(true, "wild card");
-        }
-        if (card.type() == CardType.WILD_DRAW_FOUR) {
-            logCanPlay(card, topCard, currentColor, game, true, "wild draw four");
-            return new PlayValidation(true, "wild draw four");
         }
         if (card.color() == currentColor) {
             logCanPlay(card, topCard, currentColor, game, true, "color match");
@@ -676,7 +690,7 @@ public class GameService {
         return new PlayValidation(false, "color/number/type mismatch");
     }
 
-    private boolean processCardEffect(Game game, Card card, CardColor chosenColor, Long playerId) {
+    private boolean processCardEffect(Game game, GamePlayer player, Card card, CardColor chosenColor, Long playerId) {
         if (card.type() == null) {
             return false;
         }
@@ -698,11 +712,43 @@ public class GameService {
                 moveToNextPlayer(game);
                 handledTurnAdvance = true;
                 break;
+            case DRAW_FOUR:
+                addPendingDraw(game, playerId, card, chosenColor);
+                moveToNextPlayer(game);
+                handledTurnAdvance = true;
+                break;
+            case DISCARD_ALL_COLOR:
+                discardAllMatchingColor(game, player, card.color());
+                break;
+            case SKIP_ALL:
+                game.setCurrentTurn(playerId);
+                handledTurnAdvance = true;
+                break;
             case WILD_DRAW_FOUR:
                 if (chosenColor == null) {
                     throw new IllegalArgumentException("万能 +4 必须选择颜色");
                 }
                 game.setCurrentColor(chosenColor);
+                addPendingDraw(game, playerId, card, chosenColor);
+                moveToNextPlayer(game);
+                handledTurnAdvance = true;
+                break;
+            case WILD_DRAW_SIX:
+            case WILD_DRAW_TEN:
+                if (chosenColor == null) {
+                    throw new IllegalArgumentException("Wild draw card requires a color");
+                }
+                game.setCurrentColor(chosenColor);
+                addPendingDraw(game, playerId, card, chosenColor);
+                moveToNextPlayer(game);
+                handledTurnAdvance = true;
+                break;
+            case WILD_REVERSE_DRAW_FOUR:
+                if (chosenColor == null) {
+                    throw new IllegalArgumentException("Wild reverse draw four requires a color");
+                }
+                game.setCurrentColor(chosenColor);
+                game.setClockwise(!game.isClockwise());
                 addPendingDraw(game, playerId, card, chosenColor);
                 moveToNextPlayer(game);
                 handledTurnAdvance = true;
@@ -727,7 +773,7 @@ public class GameService {
         if (card == null || card.type() == null) {
             throw new IllegalArgumentException("鏃犳晥鐨勫崱鐗?");
         }
-        if (card.type() != CardType.WILD && card.type() != CardType.WILD_DRAW_FOUR) {
+        if (!requiresColorSelection(card)) {
             return;
         }
         if (chosenColor == null || chosenColor == CardColor.WILD) {
@@ -770,12 +816,21 @@ public class GameService {
             return;
         }
 
-        if (card.type() == CardType.DRAW_TWO) {
+        int amount = getDrawPenaltyAmount(card);
+        if (amount <= 0) {
+            return;
+        }
+
+        if (isNoMercy(game)) {
+            game.setPendingDrawType(PendingDrawType.DRAW_STACK);
+        } else if (card.type() == CardType.DRAW_TWO) {
             game.setPendingDrawType(PendingDrawType.DRAW_TWO_CHAIN);
-            game.setPendingDrawCount(game.getPendingDrawCount() + 2);
         } else if (card.type() == CardType.WILD_DRAW_FOUR) {
             game.setPendingDrawType(PendingDrawType.WILD_DRAW_FOUR_CHAIN);
-            game.setPendingDrawCount(game.getPendingDrawCount() + 4);
+        }
+
+        game.setPendingDrawCount(game.getPendingDrawCount() + amount);
+        if (isWildCard(card)) {
             if (chosenColor != null && chosenColor != CardColor.WILD) {
                 game.setCurrentColor(chosenColor);
             }
@@ -786,18 +841,100 @@ public class GameService {
     }
 
     private boolean isPenaltyStackCard(Card card) {
-        return card != null && (card.type() == CardType.DRAW_TWO || card.type() == CardType.WILD_DRAW_FOUR);
+        return isDrawPenaltyCard(card);
     }
 
     private int penaltyValue(Card card) {
+        return getDrawPenaltyAmount(card);
+    }
+
+    boolean canStackNoMercyPenalty(Card card, Card topCard) {
+        int candidate = penaltyValue(card);
+        if (candidate <= 0) {
+            return false;
+        }
+        int required = penaltyValue(topCard);
+        return candidate >= required;
+    }
+
+    private boolean isWildCard(Card card) {
+        if (card == null || card.type() == null) {
+            return false;
+        }
+        return switch (card.type()) {
+            case WILD, WILD_DRAW_FOUR, WILD_DRAW_SIX, WILD_DRAW_TEN, WILD_REVERSE_DRAW_FOUR -> true;
+            default -> false;
+        };
+    }
+
+    private boolean isDrawPenaltyCard(Card card) {
+        return getDrawPenaltyAmount(card) > 0;
+    }
+
+    private int getDrawPenaltyAmount(Card card) {
         if (card == null || card.type() == null) {
             return 0;
         }
         return switch (card.type()) {
             case DRAW_TWO -> 2;
-            case WILD_DRAW_FOUR -> 4;
+            case DRAW_FOUR, WILD_DRAW_FOUR, WILD_REVERSE_DRAW_FOUR -> 4;
+            case WILD_DRAW_SIX -> 6;
+            case WILD_DRAW_TEN -> 10;
             default -> 0;
         };
+    }
+
+    private boolean requiresColorSelection(Card card) {
+        return isWildCard(card);
+    }
+
+    private boolean isNoMercyOnlyCard(Card card) {
+        if (card == null || card.type() == null) {
+            return false;
+        }
+        return switch (card.type()) {
+            case DRAW_FOUR, DISCARD_ALL_COLOR, SKIP_ALL, WILD_DRAW_SIX, WILD_DRAW_TEN, WILD_REVERSE_DRAW_FOUR -> true;
+            default -> false;
+        };
+    }
+
+    private boolean isNoMercy(Game game) {
+        return resolveGameMode(game) == GameMode.NO_MERCY;
+    }
+
+    private GameMode resolveGameMode(Game game) {
+        if (game == null || game.getRoom() == null || game.getRoom().getGameMode() == null) {
+            return GameMode.CLASSIC;
+        }
+        return game.getRoom().getGameMode();
+    }
+
+    private void discardAllMatchingColor(Game game, GamePlayer player, CardColor color) {
+        if (game == null || player == null || color == null || color == CardColor.WILD) {
+            return;
+        }
+
+        List<Card> hand = player.getHandCards();
+        List<Card> remaining = new ArrayList<>();
+        List<Card> discarded = new ArrayList<>();
+        for (Card handCard : hand) {
+            if (handCard != null && handCard.color() == color) {
+                discarded.add(handCard);
+            } else {
+                remaining.add(handCard);
+            }
+        }
+
+        if (!discarded.isEmpty()) {
+            List<Card> discardPile = fromJson(game.getDiscardPileJson());
+            discardPile.addAll(discarded);
+            game.setDiscardPileJson(toJson(discardPile));
+        }
+
+        setSortedHand(player, remaining);
+        player.setSaidUno(remaining.size() == 1);
+        gamePlayerRepository.save(player);
+        game.setCurrentColor(color);
     }
 
     private void logPenaltyStack(Card card, Long playerId, Game game) {
@@ -969,14 +1106,14 @@ public class GameService {
         List<Card> drawPile = fromJson(game.getDrawPileJson());
         List<Card> discardPile = fromJson(game.getDiscardPileJson());
         if (drawPile.isEmpty()) {
-            Deck newDeck = new Deck();
+            Deck newDeck = new Deck(resolveGameMode(game));
             game.setDrawPileJson(toJson(newDeck.getDrawPile()));
             game.setDiscardPileJson(toJson(newDeck.getDiscardPile()));
             gameRepository.save(game);
             return newDeck;
         }
 
-        Deck deck = new Deck(drawPile, discardPile);
+        Deck deck = new Deck(drawPile, discardPile, resolveGameMode(game));
         if (deck.getDrawPileSize() != drawPile.size()) {
             game.setDrawPileJson(toJson(deck.getDrawPile()));
             game.setDiscardPileJson(toJson(deck.getDiscardPile()));
@@ -1012,7 +1149,7 @@ public class GameService {
         if (card == null || card.type() == null) {
             return 99;
         }
-        if (card.type() == CardType.WILD || card.type() == CardType.WILD_DRAW_FOUR) {
+        if (isWildCard(card)) {
             return 0;
         }
         return 1;
@@ -1038,10 +1175,16 @@ public class GameService {
         return switch (card.type()) {
             case WILD -> 0;
             case WILD_DRAW_FOUR -> 1;
-            case DRAW_TWO -> 2;
-            case SKIP -> 3;
-            case REVERSE -> 4;
-            case NUMBER -> 10;
+            case WILD_DRAW_SIX -> 2;
+            case WILD_DRAW_TEN -> 3;
+            case WILD_REVERSE_DRAW_FOUR -> 4;
+            case DRAW_TWO -> 5;
+            case DRAW_FOUR -> 6;
+            case DISCARD_ALL_COLOR -> 7;
+            case SKIP_ALL -> 8;
+            case SKIP -> 9;
+            case REVERSE -> 10;
+            case NUMBER -> 20;
         };
     }
 

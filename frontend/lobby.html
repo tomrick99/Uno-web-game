@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Uno - 游戏大厅</title>
+    <title>Uno - Lobby</title>
     <script src="https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios@1.5.0/dist/axios.min.js"></script>
     <link rel="stylesheet" href="css/common.css">
@@ -21,29 +21,36 @@
             <div class="logo-small">UNO</div>
             <div class="user-info">
                 <span class="username">{{ username }}</span>
-                <button v-if="isAdmin" class="btn-admin" @click="goToAdmin">管理员</button>
-                <button class="btn-logout" @click="logout">退出</button>
+                <button class="lang-toggle" @click="toggleLanguage">{{ languageLabel }}</button>
+                <button v-if="isAdmin" class="btn-admin" @click="goToAdmin">{{ t("admin") }}</button>
+                <button class="btn-logout" @click="logout">{{ t("logout") }}</button>
             </div>
         </header>
 
         <main class="lobby-main">
             <div class="lobby-header">
-                <h2>游戏大厅</h2>
-                <button class="btn-create" @click="showCreate = true">+ 创建房间</button>
+                <h2>{{ t("gameLobby") }}</h2>
+                <button class="btn-create" @click="showCreate = true">+ {{ t("createRoom") }}</button>
             </div>
 
             <div class="room-list">
-                <div v-if="rooms.length === 0" class="empty-tip">暂无可加入房间，创建一个试试吧。</div>
+                <div v-if="rooms.length === 0" class="empty-tip">{{ t("emptyRooms") }}</div>
                 <div v-else class="room-card" v-for="room in rooms" :key="room.id" @click="joinRoom(room)">
                     <div class="room-info">
                         <span class="room-code">{{ room.roomCode }}</span>
-                        <span class="room-status" :class="room.status.toLowerCase()">
-                            {{ room.status === 'WAITING' ? '等待中' : '游戏中' }}
+                        <span class="room-status" :class="String(room.status || 'WAITING').toLowerCase()">
+                            {{ room.status === 'WAITING' ? t("waiting") : t("playing") }}
                         </span>
+                        <div class="room-meta">
+                            <span>{{ room.playerCount || 0 }}/{{ room.maxPlayers || 2 }} {{ t("playersUnit") }}</span>
+                            <span>{{ modeLabel(room.gameMode) }}</span>
+                            <span>{{ room.totalRounds || 8 }} {{ t("roundsUnit") }}</span>
+                            <span>{{ room.roundTimeLimitMinutes || 10 }} {{ t("minutesUnit") }}</span>
+                        </div>
                     </div>
                     <div class="room-action">
-                        <span class="room-players">房主: {{ room.host?.username || '未知' }}</span>
-                        <button class="btn-join">加入</button>
+                        <span class="room-players">{{ t("host") }}: {{ room.host?.username || t("unknown") }}</span>
+                        <button class="btn-join">{{ t("join") }}</button>
                     </div>
                 </div>
             </div>
@@ -51,18 +58,55 @@
 
         <div v-if="showCreate" class="modal-overlay" @click.self="showCreate = false">
             <div class="modal-card">
-                <h3>创建房间</h3>
+                <h3>{{ t("customGame") }}</h3>
                 <div class="modal-body">
-                    <label>人数上限</label>
-                    <select v-model.number="maxPlayers">
-                        <option :value="2">2 人</option>
-                        <option :value="3">3 人</option>
-                        <option :value="4">4 人</option>
-                    </select>
+                    <label>{{ t("players") }}</label>
+                    <div class="option-grid compact">
+                        <button
+                            v-for="option in playerOptions"
+                            :key="option"
+                            class="option-chip"
+                            :class="{ active: maxPlayers === option }"
+                            @click="maxPlayers = option"
+                        >{{ option }}</button>
+                    </div>
+
+                    <label>{{ t("rounds") }}</label>
+                    <div class="option-grid">
+                        <button
+                            v-for="option in roundOptions"
+                            :key="option"
+                            class="option-chip"
+                            :class="{ active: totalRounds === option }"
+                            @click="totalRounds = option"
+                        >{{ option }} {{ t("roundsUnit") }}</button>
+                    </div>
+
+                    <label>{{ t("roundTime") }}</label>
+                    <div class="option-grid">
+                        <button
+                            v-for="option in timeOptions"
+                            :key="option"
+                            class="option-chip"
+                            :class="{ active: roundTimeLimitMinutes === option }"
+                            @click="roundTimeLimitMinutes = option"
+                        >{{ option }} {{ t("minutesUnit") }}</button>
+                    </div>
+
+                    <label>{{ t("mode") }}</label>
+                    <div class="option-grid mode-options">
+                        <button
+                            v-for="option in modeOptions"
+                            :key="option.value"
+                            class="option-chip"
+                            :class="{ active: gameMode === option.value }"
+                            @click="gameMode = option.value"
+                        >{{ option.label }}</button>
+                    </div>
                 </div>
                 <div class="modal-actions">
-                    <button class="btn-cancel" @click="showCreate = false">取消</button>
-                    <button class="btn-primary" @click="createRoom">创建</button>
+                    <button class="btn-cancel" @click="showCreate = false">{{ t("cancel") }}</button>
+                    <button class="btn-primary" @click="createRoom">{{ t("create") }}</button>
                 </div>
             </div>
         </div>

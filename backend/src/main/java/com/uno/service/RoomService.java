@@ -4,6 +4,7 @@ import com.uno.entity.Game;
 import com.uno.entity.GamePlayer;
 import com.uno.entity.Room;
 import com.uno.entity.User;
+import com.uno.entity.enums.GameMode;
 import com.uno.entity.enums.RoomStatus;
 import com.uno.repository.GamePlayerRepository;
 import com.uno.repository.GameRepository;
@@ -34,12 +35,31 @@ public class RoomService {
         this.gamePlayerRepository = gamePlayerRepository;
     }
 
-    public Room createRoom(User host, int maxPlayers) {
+    public Room createRoom(User host, int maxPlayers, int totalRounds, int roundTimeLimitMinutes, GameMode gameMode) {
+        validateRoomConfig(maxPlayers, totalRounds, roundTimeLimitMinutes, gameMode);
         Room room = new Room();
         room.setHost(host);
         room.setMaxPlayers(maxPlayers);
+        room.setTotalRounds(totalRounds);
+        room.setRoundTimeLimitMinutes(roundTimeLimitMinutes);
+        room.setGameMode(gameMode == null ? GameMode.CLASSIC : gameMode);
         room.setStatus(RoomStatus.WAITING);
         return roomRepository.save(room);
+    }
+
+    private void validateRoomConfig(int maxPlayers, int totalRounds, int roundTimeLimitMinutes, GameMode gameMode) {
+        if (maxPlayers < 2 || maxPlayers > 8) {
+            throw new IllegalArgumentException("Players must be between 2 and 8");
+        }
+        if (totalRounds != 8 && totalRounds != 16 && totalRounds != 32) {
+            throw new IllegalArgumentException("Total rounds must be 8, 16, or 32");
+        }
+        if (roundTimeLimitMinutes != 5 && roundTimeLimitMinutes != 10 && roundTimeLimitMinutes != 15) {
+            throw new IllegalArgumentException("Round time limit must be 5, 10, or 15 minutes");
+        }
+        if (gameMode == null) {
+            return;
+        }
     }
 
     public Optional<Room> findByRoomCode(String roomCode) {
@@ -48,6 +68,13 @@ public class RoomService {
 
     public List<Room> getWaitingRooms() {
         return roomRepository.findByStatus(RoomStatus.WAITING);
+    }
+
+    public List<Map<String, Object>> getWaitingRoomStates() {
+        return roomRepository.findByStatus(RoomStatus.WAITING).stream()
+                .sorted(Comparator.comparing(Room::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
+                .map(this::getRoomState)
+                .toList();
     }
 
     public List<Map<String, Object>> getAllRoomStates() {
@@ -101,6 +128,9 @@ public class RoomService {
         state.put("roomCode", room.getRoomCode());
         state.put("status", room.getStatus().name());
         state.put("maxPlayers", room.getMaxPlayers());
+        state.put("totalRounds", room.getTotalRounds());
+        state.put("roundTimeLimitMinutes", room.getRoundTimeLimitMinutes());
+        state.put("gameMode", room.getGameMode() == null ? GameMode.CLASSIC.name() : room.getGameMode().name());
         state.put("createdAt", room.getCreatedAt());
 
         Map<String, Object> host = new LinkedHashMap<>();

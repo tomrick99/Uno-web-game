@@ -42,15 +42,21 @@ public class RoomController {
     }
 
     @PostMapping("/create")
-    public ApiResponse<Room> createRoom(@RequestBody CreateRoomRequest request, HttpSession session) {
+    public ApiResponse<Map<String, Object>> createRoom(@RequestBody(required = false) CreateRoomRequest request, HttpSession session) {
         User user = getCurrentUser(session);
         if (user == null) {
             return ApiResponse.error(401, "Please log in first");
         }
 
         try {
-            Room room = roomService.createRoom(user, request.getMaxPlayers());
-            return ApiResponse.success("Room created", room);
+            CreateRoomRequest safeRequest = request == null ? new CreateRoomRequest() : request;
+            Room room = roomService.createRoom(
+                    user,
+                    safeRequest.getMaxPlayers(),
+                    safeRequest.getTotalRounds(),
+                    safeRequest.getRoundTimeLimitMinutes(),
+                    safeRequest.getGameMode());
+            return ApiResponse.success("Room created", roomService.getRoomState(room));
         } catch (IllegalArgumentException e) {
             return ApiResponse.error(400, e.getMessage());
         }
@@ -88,8 +94,8 @@ public class RoomController {
     }
 
     @GetMapping("/list")
-    public ApiResponse<List<Room>> listRooms() {
-        return ApiResponse.success(roomService.getWaitingRooms());
+    public ApiResponse<List<Map<String, Object>>> listRooms() {
+        return ApiResponse.success(roomService.getWaitingRoomStates());
     }
 
     @GetMapping("/{roomCode}")

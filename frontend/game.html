@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Uno - 游戏中</title>
+    <title>UNO - Game</title>
     <script src="https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios@1.5.0/dist/axios.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
@@ -21,10 +21,8 @@
 
         <header class="game-top-bar">
             <div class="game-info">
-                <span class="room-code">房间: {{ roomCode || roomId }}</span>
-                <span class="turn-indicator" :class="{ 'my-turn': isMyTurn }">
-                    {{ turnLabel }}
-                </span>
+                <span class="room-code">{{ t("room") }}: {{ roomCode || roomId }}</span>
+                <span class="turn-indicator" :class="{ 'my-turn': isMyTurn }">{{ turnLabel }}</span>
             </div>
             <div class="status-panel">
                 <div class="status-chip connection" :class="{ offline: !wsConnected }">
@@ -32,20 +30,38 @@
                     <span>{{ connectionLabel }}</span>
                 </div>
                 <div class="status-chip">
-                    <span class="status-label">方向</span>
+                    <span class="status-label">{{ t("direction") }}</span>
                     <span>{{ directionLabel }}</span>
                 </div>
+                <div class="status-chip">
+                    <span class="status-label">{{ t("mode") }}</span>
+                    <span>{{ gameModeLabel }}</span>
+                </div>
+                <div class="status-chip">
+                    <span class="status-label">{{ t("players") }}</span>
+                    <span>{{ opponents.length + 1 }}/{{ maxPlayers }}</span>
+                </div>
+                <div class="status-chip">
+                    <span class="status-label">{{ t("rounds") }}</span>
+                    <span>{{ totalRounds }}</span>
+                </div>
                 <div class="status-chip color-chip">
-                    <span class="status-label">颜色</span>
-                    <span class="current-color" :style="{ background: colorMap[currentColor] }"></span>
+                    <span class="status-label">{{ t("currentColor") }}</span>
+                    <span class="current-color" :style="{ background: colorMap[currentColor] || '#777' }"></span>
                     <span>{{ currentColorLabel }}</span>
                 </div>
+                <button class="lang-toggle" @click="toggleLanguage">{{ languageLabel }}</button>
+                <button id="backToLobbyButton" class="top-action-btn" :disabled="leavingRoom">{{ t("backToLobby") }}</button>
             </div>
         </header>
 
         <section class="opponents-area">
-            <div class="opponent" v-for="(player, idx) in opponents" :key="idx"
-                 :class="{ 'current-turn': String(player.userId) === String(currentTurn) }">
+            <div
+                v-for="player in opponents"
+                :key="player.userId"
+                class="opponent"
+                :class="{ 'current-turn': String(player.userId) === String(currentTurn) }"
+            >
                 <div class="opponent-avatar">{{ player.username.charAt(0).toUpperCase() }}</div>
                 <div class="opponent-name">{{ player.username }}</div>
                 <div class="opponent-cards">
@@ -56,12 +72,17 @@
         </section>
 
         <section class="game-center">
-            <div class="draw-pile" :class="{ disabled: !canDraw }" @click="drawCardAction">
+            <div
+                class="draw-pile"
+                :class="{ disabled: !canDraw }"
+                :title="canDraw ? t('canDraw') : t('cannotDraw')"
+                @click="drawCardAction"
+            >
                 <div class="card card-back draw-card">
                     <div class="card-back-design">UNO</div>
                     <div class="draw-count">{{ drawPileSize }}</div>
                 </div>
-                <div class="pile-label">{{ canDraw ? '点击抽牌' : '抽牌堆' }}</div>
+                <div class="pile-label">{{ canDraw ? t("clickDraw") : t("drawPile") }}</div>
             </div>
 
             <div class="discard-pile">
@@ -70,17 +91,36 @@
                     <div class="card-center">{{ topCard.display }}</div>
                     <div class="card-corner bottom-right">{{ topCard.display }}</div>
                 </div>
-                <div v-else class="card-placeholder">等待开始...</div>
-                <div class="pile-label">弃牌堆</div>
+                <div v-else class="card-placeholder">{{ t("waitingStart") }}</div>
+                <div class="pile-label">{{ t("discardPile") }}</div>
             </div>
         </section>
 
+        <aside class="game-help-panel">
+            <section v-if="selectedCardInfo" class="help-section selected-card-help">
+                <div class="help-title">{{ t("selectedCard") }} · {{ selectedCardInfo.display }}</div>
+                <p>{{ selectedCardInfo.description }}</p>
+                <p :class="{ good: selectedCardInfo.canPlay, warn: !selectedCardInfo.canPlay }">{{ selectedCardInfo.playHint }}</p>
+                <p v-if="selectedCardInfo.colorHint" class="warn">{{ selectedCardInfo.colorHint }}</p>
+            </section>
+            <section class="help-section">
+                <div class="help-title">{{ gameModeLabel }} {{ t("rules") }}</div>
+                <ul>
+                    <li v-for="line in modeRuleLines" :key="line">{{ line }}</li>
+                </ul>
+            </section>
+        </aside>
+
         <section class="my-hand-area">
             <div class="hand-cards">
-                <div v-for="(card, idx) in handCards" :key="idx"
-                     class="card"
-                     :class="[card.color.toLowerCase(), { 'playable': card.playable, 'selected': selectedCard === idx }]"
-                     @click="selectCard(idx)">
+                <div
+                    v-for="(card, idx) in handCards"
+                    :key="`${card.color}-${card.type}-${card.value}-${idx}`"
+                    class="card"
+                    :class="[card.color.toLowerCase(), card.stateClass, { selected: selectedCard === idx }]"
+                    :title="card.hint"
+                    @click="selectCard(idx)"
+                >
                     <div class="card-corner top-left">{{ card.display }}</div>
                     <div class="card-center">{{ card.display }}</div>
                     <div class="card-corner bottom-right">{{ card.display }}</div>
@@ -88,30 +128,48 @@
             </div>
 
             <div class="action-buttons" v-if="selectedCard !== null">
-                <button class="btn-play" :disabled="!canPlaySelected" @click="playSelectedCard">出牌</button>
-                <button v-if="needsColorPick" class="btn-color-pick" @click="pickColor('RED')">红</button>
-                <button v-if="needsColorPick" class="btn-color-pick blue" @click="pickColor('BLUE')">蓝</button>
-                <button v-if="needsColorPick" class="btn-color-pick green" @click="pickColor('GREEN')">绿</button>
-                <button v-if="needsColorPick" class="btn-color-pick yellow" @click="pickColor('YELLOW')">黄</button>
+                <button id="playSelectedCardButton" class="btn-play" :disabled="!canPlaySelected" @click="playSelectedCard">
+                    {{ t("playCard") }}
+                </button>
+                <button v-if="needsColorPick" class="btn-color-pick" @click="pickColor('RED')">{{ colorName("RED") }}</button>
+                <button v-if="needsColorPick" class="btn-color-pick blue" @click="pickColor('BLUE')">{{ colorName("BLUE") }}</button>
+                <button v-if="needsColorPick" class="btn-color-pick green" @click="pickColor('GREEN')">{{ colorName("GREEN") }}</button>
+                <button v-if="needsColorPick" class="btn-color-pick yellow" @click="pickColor('YELLOW')">{{ colorName("YELLOW") }}</button>
+            </div>
+
+            <div v-if="showPenaltyNotice" class="penalty-panel">
+                <div class="penalty-text">{{ penaltyNoticeText }}</div>
+                <button
+                    v-if="showDrawPenaltyButton"
+                    id="drawPenaltyButton"
+                    class="btn-primary"
+                    :disabled="drawingPenalty"
+                >
+                    {{ drawPenaltyButtonText }}
+                </button>
             </div>
         </section>
 
-        <div class="game-log" :class="{ 'expanded': logExpanded }">
-            <div class="log-toggle" @click="logExpanded = !logExpanded">游戏日志</div>
+        <div class="game-log" :class="{ expanded: logExpanded }">
+            <div class="log-toggle" @click="logExpanded = !logExpanded">{{ t("gameLog") }}</div>
             <div class="log-content" v-if="logExpanded">
+                <div class="log-help">{{ t("logHelp") }}</div>
                 <div class="log-item" v-for="(log, idx) in gameLog" :key="idx">{{ log }}</div>
             </div>
         </div>
 
         <div v-if="gameResult" class="modal-overlay">
             <div class="modal-card result-card">
-                <h2 :class="{ 'win': gameResult.win, 'lose': !gameResult.win }">
-                    {{ gameResult.title }}
-                </h2>
-                <p class="result-subtitle">{{ gameResult.win ? '本局胜利，准备继续吗？' : '本局结束，你可以回大厅或马上再来一局。' }}</p>
+                <h2 :class="{ win: gameResult.win, lose: !gameResult.win }">{{ gameResult.title }}</h2>
+                <p class="result-subtitle">
+                    {{ gameResult.win ? t("winSubtitle") : t("loseSubtitle") }}
+                </p>
+                <p v-if="gameResult.statusText" class="result-status">{{ gameResult.statusText }}</p>
                 <div class="result-actions">
-                    <button class="btn-secondary" @click="backToLobby(true)">返回大厅</button>
-                    <button class="btn-primary" @click="restartGameAction">再来一局</button>
+                    <button id="endReturnLobbyBtn" class="btn-secondary">{{ t("backToLobby") }}</button>
+                    <button id="restartGameBtn" class="btn-primary" :disabled="gameResult.rematchButtonDisabled || restartingGame">
+                        {{ gameResult.rematchButtonText }}
+                    </button>
                 </div>
             </div>
         </div>

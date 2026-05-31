@@ -1,6 +1,7 @@
 package com.uno.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.uno.entity.enums.GameMode;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
@@ -26,6 +27,16 @@ public class Room {
     @Column(name = "max_players")
     private int maxPlayers = 2;
 
+    @Column(name = "total_rounds")
+    private int totalRounds = 8;
+
+    @Column(name = "round_time_limit_minutes")
+    private int roundTimeLimitMinutes = 10;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "game_mode", length = 50)
+    private GameMode gameMode = GameMode.CLASSIC;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -34,6 +45,27 @@ public class Room {
         createdAt = LocalDateTime.now();
         if (roomCode == null) {
             roomCode = generateRoomCode();
+        }
+        applyDefaults();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        applyDefaults();
+    }
+
+    private void applyDefaults() {
+        if (maxPlayers < 2) {
+            maxPlayers = 2;
+        }
+        if (totalRounds <= 0) {
+            totalRounds = 8;
+        }
+        if (roundTimeLimitMinutes <= 0) {
+            roundTimeLimitMinutes = 10;
+        }
+        if (gameMode == null) {
+            gameMode = GameMode.CLASSIC;
         }
     }
 
@@ -63,6 +95,15 @@ public class Room {
 
     public int getMaxPlayers() { return maxPlayers; }
     public void setMaxPlayers(int maxPlayers) { this.maxPlayers = maxPlayers; }
+
+    public int getTotalRounds() { return totalRounds; }
+    public void setTotalRounds(int totalRounds) { this.totalRounds = totalRounds; }
+
+    public int getRoundTimeLimitMinutes() { return roundTimeLimitMinutes; }
+    public void setRoundTimeLimitMinutes(int roundTimeLimitMinutes) { this.roundTimeLimitMinutes = roundTimeLimitMinutes; }
+
+    public GameMode getGameMode() { return gameMode; }
+    public void setGameMode(GameMode gameMode) { this.gameMode = gameMode; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

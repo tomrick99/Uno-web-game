@@ -2,60 +2,67 @@ package com.uno.model;
 
 import com.uno.entity.enums.CardColor;
 import com.uno.entity.enums.CardType;
+import com.uno.entity.enums.GameMode;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
-/**
- * 牌堆模型 - 管理摸牌堆和弃牌堆
- */
 public class Deck {
 
     private List<Card> drawPile = new ArrayList<>();
     private List<Card> discardPile = new ArrayList<>();
 
     public Deck() {
-        initializeDeck();
+        this(GameMode.CLASSIC);
+    }
+
+    public Deck(GameMode gameMode) {
+        initializeDeck(gameMode == null ? GameMode.CLASSIC : gameMode);
         shuffle();
     }
 
-    /**
-     * 从已有牌堆创建 Deck（用于恢复游戏状态）
-     */
     public Deck(List<Card> drawPile, List<Card> discardPile) {
+        this(drawPile, discardPile, GameMode.CLASSIC);
+    }
+
+    public Deck(List<Card> drawPile, List<Card> discardPile, GameMode gameMode) {
         this.drawPile = new ArrayList<>();
         this.discardPile = new ArrayList<>();
-        // 只保留有效的牌（color 不为 null）
-        for (Card card : drawPile) {
+
+        for (Card card : drawPile == null ? List.<Card>of() : drawPile) {
             if (card != null && card.color() != null && card.type() != null) {
                 this.drawPile.add(card);
             }
         }
-        for (Card card : discardPile) {
+        for (Card card : discardPile == null ? List.<Card>of() : discardPile) {
             if (card != null && card.color() != null && card.type() != null) {
                 this.discardPile.add(card);
             }
         }
-        // 如果恢复的牌堆为空，初始化新牌堆
+
         if (this.drawPile.isEmpty()) {
-            initializeDeck();
+            initializeDeck(gameMode == null ? GameMode.CLASSIC : gameMode);
             shuffle();
         }
     }
 
-    /**
-     * 初始化 108 张 Uno 牌
-     */
-    private void initializeDeck() {
+    private void initializeDeck(GameMode gameMode) {
+        initializeClassicDeck();
+        if (gameMode == GameMode.NO_MERCY) {
+            addNoMercyCards();
+        }
+    }
+
+    private void initializeClassicDeck() {
         List<CardColor> colors = List.of(CardColor.RED, CardColor.BLUE, CardColor.GREEN, CardColor.YELLOW);
 
         for (CardColor color : colors) {
-            // 每种颜色 1 张 0，2 张 1-9
             drawPile.add(new Card(color, CardType.NUMBER, 0));
-            for (int v = 1; v <= 9; v++) {
-                drawPile.add(new Card(color, CardType.NUMBER, v));
-                drawPile.add(new Card(color, CardType.NUMBER, v));
+            for (int value = 1; value <= 9; value++) {
+                drawPile.add(new Card(color, CardType.NUMBER, value));
+                drawPile.add(new Card(color, CardType.NUMBER, value));
             }
-            // 每种颜色 2 张功能牌
             for (int i = 0; i < 2; i++) {
                 drawPile.add(new Card(color, CardType.SKIP, 20));
                 drawPile.add(new Card(color, CardType.REVERSE, 20));
@@ -63,53 +70,67 @@ public class Deck {
             }
         }
 
-        // 4 张 Wild，4 张 Wild Draw Four
         for (int i = 0; i < 4; i++) {
             drawPile.add(new Card(CardColor.WILD, CardType.WILD, 50));
             drawPile.add(new Card(CardColor.WILD, CardType.WILD_DRAW_FOUR, 50));
         }
     }
 
-    /**
-     * 洗牌
-     */
+    private void addNoMercyCards() {
+        List<CardColor> colors = List.of(CardColor.RED, CardColor.BLUE, CardColor.GREEN, CardColor.YELLOW);
+
+        for (CardColor color : colors) {
+            for (int i = 0; i < 2; i++) {
+                // No Mercy test deck: 2 extra colored +2 cards per color.
+                drawPile.add(new Card(color, CardType.DRAW_TWO, 20));
+                // No Mercy test deck: 2 colored +4 cards per color.
+                drawPile.add(new Card(color, CardType.DRAW_FOUR, 40));
+                // No Mercy test deck: 2 discard-all-color cards per color.
+                drawPile.add(new Card(color, CardType.DISCARD_ALL_COLOR, 20));
+                // No Mercy test deck: 2 skip-all cards per color.
+                drawPile.add(new Card(color, CardType.SKIP_ALL, 20));
+            }
+        }
+
+        for (int i = 0; i < 4; i++) {
+            // No Mercy test deck: 4 wild +6 cards.
+            drawPile.add(new Card(CardColor.WILD, CardType.WILD_DRAW_SIX, 60));
+            // No Mercy test deck: 4 wild +10 cards.
+            drawPile.add(new Card(CardColor.WILD, CardType.WILD_DRAW_TEN, 100));
+            // No Mercy test deck: 4 wild reverse +4 cards.
+            drawPile.add(new Card(CardColor.WILD, CardType.WILD_REVERSE_DRAW_FOUR, 50));
+        }
+    }
+
     public void shuffle() {
         Collections.shuffle(drawPile);
     }
 
-    /**
-     * 摸一张牌
-     */
     public Card drawCard() {
         if (drawPile.isEmpty()) {
             recycleDiscardPile();
         }
         if (drawPile.isEmpty()) {
-            return null;  // 极端情况：无牌可摸
+            return null;
         }
         return drawPile.remove(drawPile.size() - 1);
     }
 
-    /**
-     * 打出一张牌到弃牌堆
-     */
     public void discard(Card card) {
         discardPile.add(card);
     }
 
-    /**
-     * 获取弃牌堆顶部牌
-     */
     public Card getTopDiscard() {
-        if (discardPile.isEmpty()) return null;
+        if (discardPile.isEmpty()) {
+            return null;
+        }
         return discardPile.get(discardPile.size() - 1);
     }
 
-    /**
-     * 弃牌堆重新洗入摸牌堆
-     */
     private void recycleDiscardPile() {
-        if (discardPile.size() <= 1) return;  // 保留顶部一张
+        if (discardPile.size() <= 1) {
+            return;
+        }
         Card top = discardPile.remove(discardPile.size() - 1);
         drawPile.addAll(discardPile);
         discardPile.clear();

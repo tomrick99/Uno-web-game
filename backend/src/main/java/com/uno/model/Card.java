@@ -8,11 +8,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.uno.entity.enums.CardColor;
 import com.uno.entity.enums.CardType;
 
-/**
- * 卡牌模型（非 JPA 实体，使用 JSON 序列化存储）
- * 使用 @JsonAutoDetect(fieldVisibility = ANY) 确保 Jackson 通过字段序列化，
- * 而不是通过 getter 方法，避免 record-style accessor 导致的序列化/反序列化不一致。
- */
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY, getterVisibility = JsonAutoDetect.Visibility.NONE)
 public class Card {
@@ -45,15 +40,12 @@ public class Card {
     @JsonProperty("value")
     public int value() { return value; }
 
-    /**
-     * 判断这张牌是否可以出（匹配规则）
-     */
     @JsonIgnore
     public boolean canPlayOn(Card topCard, CardColor currentColor) {
         if (this.type == null || this.color == null) {
             return false;
         }
-        if (this.type == CardType.WILD || this.type == CardType.WILD_DRAW_FOUR) {
+        if (isWildLike(this.type)) {
             return true;
         }
         if (this.color == currentColor) {
@@ -67,37 +59,42 @@ public class Card {
                 && this.value == topCard.value()) {
             return true;
         }
-        if (this.type != CardType.NUMBER
+        return this.type != CardType.NUMBER
                 && topCard.type() != CardType.NUMBER
-                && this.type == topCard.type()) {
-            return true;
-        }
-        return false;
+                && this.type == topCard.type();
     }
 
-    /**
-     * 获取卡牌显示文本
-     */
     @JsonIgnore
     public String getDisplayName() {
         return switch (type) {
             case NUMBER -> String.valueOf(value);
-            case SKIP -> "⊘";
-            case REVERSE -> "⇄";
+            case SKIP -> "SKIP";
+            case REVERSE -> "REV";
             case DRAW_TWO -> "+2";
-            case WILD -> "🎨";
+            case DRAW_FOUR -> "+4";
+            case DISCARD_ALL_COLOR -> "DROP";
+            case SKIP_ALL -> "SKIP ALL";
+            case WILD -> "WILD";
             case WILD_DRAW_FOUR -> "+4";
+            case WILD_DRAW_SIX -> "+6";
+            case WILD_DRAW_TEN -> "+10";
+            case WILD_REVERSE_DRAW_FOUR -> "+4 REV";
         };
     }
 
-    /**
-     * 获取卡牌颜色 CSS 类名
-     */
     @JsonIgnore
     public String getColorClass() {
         if (color == null || color == CardColor.WILD) {
             return "wild";
         }
         return color.name().toLowerCase();
+    }
+
+    private boolean isWildLike(CardType type) {
+        return type == CardType.WILD
+                || type == CardType.WILD_DRAW_FOUR
+                || type == CardType.WILD_DRAW_SIX
+                || type == CardType.WILD_DRAW_TEN
+                || type == CardType.WILD_REVERSE_DRAW_FOUR;
     }
 }
