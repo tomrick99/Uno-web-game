@@ -39,7 +39,7 @@
                 </div>
                 <div class="status-chip">
                     <span class="status-label">{{ t("players") }}</span>
-                    <span>{{ opponents.length + 1 }}/{{ maxPlayers }}</span>
+                    <span>{{ playerCount }}/{{ maxPlayers }}</span>
                 </div>
                 <div class="status-chip">
                     <span class="status-label">{{ t("rounds") }}</span>
@@ -55,17 +55,17 @@
             </div>
         </header>
 
-        <section class="opponents-area">
+        <section class="players-area">
             <div
-                v-for="player in opponents"
+                v-for="player in tablePlayers"
                 :key="player.userId"
-                class="opponent"
-                :class="{ 'current-turn': String(player.userId) === String(currentTurn) }"
+                class="table-player"
+                :class="{ 'current-turn': player.isCurrentTurn, me: player.isMe }"
             >
                 <div class="opponent-avatar">{{ player.username.charAt(0).toUpperCase() }}</div>
-                <div class="opponent-name">{{ player.username }}</div>
-                <div class="opponent-cards">
-                    <div class="card-back-small" v-for="n in player.handCount" :key="n"></div>
+                <div class="player-info">
+                    <div class="opponent-name">{{ player.username }}<span v-if="player.isMe"> · {{ t("me") }}</span></div>
+                    <div class="player-meta">{{ player.handCount }} {{ t("cardsUnit") }}</div>
                 </div>
                 <div class="uno-badge" v-if="player.saidUno">UNO!</div>
             </div>
@@ -96,19 +96,22 @@
             </div>
         </section>
 
-        <aside class="game-help-panel">
-            <section v-if="selectedCardInfo" class="help-section selected-card-help">
-                <div class="help-title">{{ t("selectedCard") }} · {{ selectedCardInfo.display }}</div>
-                <p>{{ selectedCardInfo.description }}</p>
-                <p :class="{ good: selectedCardInfo.canPlay, warn: !selectedCardInfo.canPlay }">{{ selectedCardInfo.playHint }}</p>
-                <p v-if="selectedCardInfo.colorHint" class="warn">{{ selectedCardInfo.colorHint }}</p>
-            </section>
-            <section class="help-section">
-                <div class="help-title">{{ gameModeLabel }} {{ t("rules") }}</div>
-                <ul>
-                    <li v-for="line in modeRuleLines" :key="line">{{ line }}</li>
-                </ul>
-            </section>
+        <aside class="game-help-panel" :class="{ expanded: rulesExpanded }">
+            <div class="rules-toggle" @click="rulesExpanded = !rulesExpanded">{{ t("rules") }}</div>
+            <div class="rules-content" v-if="rulesExpanded">
+                <section v-if="selectedCardInfo" class="help-section selected-card-help">
+                    <div class="help-title">{{ t("selectedCard") }} · {{ selectedCardInfo.display }}</div>
+                    <p>{{ selectedCardInfo.description }}</p>
+                    <p :class="{ good: selectedCardInfo.canPlay, warn: !selectedCardInfo.canPlay }">{{ selectedCardInfo.playHint }}</p>
+                    <p v-if="selectedCardInfo.colorHint" class="warn">{{ selectedCardInfo.colorHint }}</p>
+                </section>
+                <section class="help-section">
+                    <div class="help-title">{{ gameModeLabel }} {{ t("rules") }}</div>
+                    <ul>
+                        <li v-for="line in modeRuleLines" :key="line">{{ line }}</li>
+                    </ul>
+                </section>
+            </div>
         </aside>
 
         <section class="my-hand-area">

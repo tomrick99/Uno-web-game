@@ -70,8 +70,7 @@ public class GameController {
                 color = CardColor.valueOf(chosenColor.toUpperCase());
             }
 
-            gameService.playCard(gameId, userId, cardIndex, color);
-            return ApiResponse.success("Card played", buildSnapshotForPlayer(gameId, userId));
+            return ApiResponse.success("Card played", gameService.playCard(gameId, userId, cardIndex, color));
         } catch (IllegalArgumentException e) {
             return ApiResponse.error(400, e.getMessage());
         } catch (RuntimeException e) {

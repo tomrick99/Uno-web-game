@@ -25,6 +25,7 @@ createApp({
         const drawPileSize = ref(0);
         const topCard = ref(null);
         const handCards = ref([]);
+        const tablePlayers = ref([]);
         const opponents = ref([]);
         const currentPlayerName = ref("");
         const selectedCard = ref(null);
@@ -32,6 +33,7 @@ createApp({
         const chosenColor = ref("");
         const gameLog = ref([]);
         const logExpanded = ref(false);
+        const rulesExpanded = ref(false);
         const gameResult = ref(null);
         const toastMsg = ref("");
         const language = ref(localStorage.getItem("unoLanguage") || "zh");
@@ -51,6 +53,7 @@ createApp({
 
         let reconnectTimer = null;
         let pollTimer = null;
+        let autoPenaltyTimer = null;
         let delegatedButtonHandler = null;
         let beforeUnloadHandler = null;
 
@@ -67,6 +70,8 @@ createApp({
                 direction: "方向",
                 mode: "模式",
                 players: "玩家",
+                cardsUnit: "张",
+                me: "我",
                 rounds: "局数",
                 currentColor: "当前颜色",
                 backToLobby: "返回大厅",
@@ -108,7 +113,7 @@ createApp({
                 noStackable: "没有可叠加的罚牌，将自动抽 {count} 张。",
                 pendingEqualHigher: "待罚 {count} 张；只能叠加不小于上一张罚牌点数的罚牌。",
                 pendingPlus4: "待罚 {count} 张；只能叠加 +4。",
-                pendingPlus2: "待罚 {count} 张；可叠加 +2 或 +4。",
+                pendingPlus2: "待罚 {count} 张；只能叠加 +2。",
                 rematchReadyBoth: "双方都已准备，正在重开...",
                 rematchReadyYou: "你已准备，等待对方。",
                 rematchReadyOther: "对方已准备。",
@@ -142,6 +147,8 @@ createApp({
                 direction: "Direction",
                 mode: "Mode",
                 players: "Players",
+                cardsUnit: "cards",
+                me: "Me",
                 rounds: "Rounds",
                 currentColor: "Color",
                 backToLobby: "Back to Lobby",
@@ -183,7 +190,7 @@ createApp({
                 noStackable: "No stackable draw card. Drawing {count} cards automatically.",
                 pendingEqualHigher: "Pending draw: {count}. Stack a draw card equal to or higher than the last penalty.",
                 pendingPlus4: "Pending draw: {count}. Stack +4 only.",
-                pendingPlus2: "Pending draw: {count}. Stack +2 or +4.",
+                pendingPlus2: "Pending draw: {count}. Stack +2 only.",
                 rematchReadyBoth: "Both players are ready. Restarting...",
                 rematchReadyYou: "You are ready. Waiting for the other player.",
                 rematchReadyOther: "The other player is ready.",
@@ -261,6 +268,9 @@ createApp({
         );
         const canDraw = computed(() =>
             gameStatus.value === "PLAYING" && isMyTurn.value && !isPendingDrawStack.value
+        );
+        const playerCount = computed(() =>
+            tablePlayers.value.length || opponents.value.length + 1
         );
 
         const languageLabel = computed(() => language.value === "zh" ? "EN" : "中文");
@@ -363,8 +373,7 @@ createApp({
             }
             if (pendingDrawType.value === "DRAW_TWO_CHAIN") {
                 if (card.type === "DRAW_TWO") return { canPlay: true, reason: "pending +2 chain allows +2" };
-                if (card.type === "WILD_DRAW_FOUR") return { canPlay: true, reason: "pending +2 chain allows +4" };
-                return { canPlay: false, reason: "pending +2 chain only allows +2 or +4" };
+                return { canPlay: false, reason: "pending +2 chain only allows +2" };
             }
             return { canPlay: false, reason: "unknown pending draw state" };
         };
@@ -378,7 +387,7 @@ createApp({
                 return cards.some((card) => canStackNoMercyPenalty(card, topCard.value));
             }
             if (type === "DRAW_TWO_CHAIN") {
-                return cards.some((card) => card?.type === "DRAW_TWO" || card?.type === "WILD_DRAW_FOUR");
+                return cards.some((card) => card?.type === "DRAW_TWO");
             }
             return false;
         };
@@ -434,8 +443,7 @@ createApp({
                 "pending draw allows equal or higher draw penalty card": language.value === "zh" ? "可以叠加不小于上一张的罚牌" : "You can stack an equal or higher draw penalty",
                 "pending draw only allows equal or higher draw penalty cards": language.value === "zh" ? "只能叠加不小于上一张的罚牌" : "Only equal or higher draw penalties can be stacked",
                 "pending +2 chain allows +2": language.value === "zh" ? "可以叠加 +2" : "You can stack +2",
-                "pending +2 chain allows +4": language.value === "zh" ? "可以叠加 +4" : "You can stack +4",
-                "pending +2 chain only allows +2 or +4": language.value === "zh" ? "当前只能叠加 +2 或 +4" : "Only +2 or +4 can be stacked now",
+                "pending +2 chain only allows +2": language.value === "zh" ? "当前只能叠加 +2" : "Only +2 can be stacked now",
                 "unknown pending draw state": language.value === "zh" ? "未知罚牌状态" : "Unknown draw state",
                 "wild card": t("playable"),
                 "color match": language.value === "zh" ? "颜色匹配" : "Color match",
@@ -526,7 +534,7 @@ createApp({
         const turnLabel = computed(() => {
             if (gameStatus.value === "FINISHED") return t("gameFinished");
             if (gameStatus.value !== "PLAYING") {
-                return `${t("waitingPlayers")} (${opponents.value.length + 1}/${maxPlayers.value})`;
+                return `${t("waitingPlayers")} (${playerCount.value}/${maxPlayers.value})`;
             }
             if (showPenaltyNotice.value) {
                 return hasPlayablePenaltyResponse.value
@@ -556,6 +564,13 @@ createApp({
             chosenColor.value = "";
         };
 
+        const clearAutoPenaltyTimer = () => {
+            if (autoPenaltyTimer) {
+                clearTimeout(autoPenaltyTimer);
+                autoPenaltyTimer = null;
+            }
+        };
+
         const refreshHandPlayability = () => {
             handCards.value = sortHandCards(handCards.value).map(decorateCard);
             if (selectedCard.value === null) return;
@@ -569,15 +584,23 @@ createApp({
         };
 
         const syncPendingDrawUiState = () => {
+            clearAutoPenaltyTimer();
             if (!isPendingDrawStack.value || !hasLoadedHand.value || !isMyTurn.value || gameStatus.value !== "PLAYING") {
                 autoPenaltyInProgress.value = false;
+                lastAutoPenaltyKey.value = "";
                 return;
             }
-            if (hasPlayablePenaltyResponse.value) return;
+            if (hasPlayablePenaltyResponse.value) {
+                lastAutoPenaltyKey.value = "";
+                return;
+            }
 
             const pendingKey = getPendingDrawStateKey();
             if (!pendingKey || autoPenaltyInProgress.value || lastAutoPenaltyKey.value === pendingKey) return;
-            drawPenaltyAction({ autoTriggered: true, pendingKey });
+            autoPenaltyTimer = setTimeout(() => {
+                autoPenaltyTimer = null;
+                drawPenaltyAction({ autoTriggered: true, pendingKey });
+            }, 150);
         };
 
         const applyHandCards = (cards) => {
@@ -615,6 +638,8 @@ createApp({
             pendingDrawCount.value = 0;
             pendingDrawType.value = "NONE";
             autoPenaltyInProgress.value = false;
+            lastAutoPenaltyKey.value = "";
+            clearAutoPenaltyTimer();
             gameResult.value = buildGameResult(gameState);
         };
 
@@ -638,6 +663,7 @@ createApp({
             drawPileSize.value = 0;
             topCard.value = null;
             handCards.value = [];
+            tablePlayers.value = [];
             opponents.value = [];
             currentPlayerName.value = t("waitingPlayers");
             clearCardSelection();
@@ -649,6 +675,7 @@ createApp({
             hasLoadedHand.value = false;
             autoPenaltyInProgress.value = false;
             lastAutoPenaltyKey.value = "";
+            clearAutoPenaltyTimer();
         };
 
         const storeLobbyNotice = (message) => {
@@ -656,6 +683,7 @@ createApp({
         };
 
         const cleanupRealtime = () => {
+            clearAutoPenaltyTimer();
             if (pollTimer) {
                 clearInterval(pollTimer);
                 pollTimer = null;
@@ -690,6 +718,16 @@ createApp({
             gameMode.value = state.gameMode || gameMode.value || "CLASSIC";
         };
 
+        const mapTablePlayer = (player) => ({
+            userId: player.userId,
+            username: player.username,
+            seatIndex: player.seatIndex,
+            handCount: player.handCount ?? 0,
+            saidUno: Boolean(player.saidUno),
+            isMe: String(player.userId) === String(userId.value),
+            isCurrentTurn: String(player.userId) === String(currentTurn.value)
+        });
+
         const renderRoom = (roomState) => {
             if (!roomState) return;
             roomId.value = roomState.roomId || roomState.id || roomId.value;
@@ -701,15 +739,8 @@ createApp({
                 subscribeGameChannels(roomState.gameId);
             }
             const players = roomState.players || [];
-            opponents.value = players
-                .filter((player) => String(player.userId) !== String(userId.value))
-                .map((player) => ({
-                    userId: player.userId,
-                    username: player.username,
-                    seatIndex: player.seatIndex,
-                    handCount: player.handCount ?? 0,
-                    saidUno: Boolean(player.saidUno)
-                }));
+            tablePlayers.value = players.map(mapTablePlayer);
+            opponents.value = tablePlayers.value.filter((player) => !player.isMe);
         };
 
         const renderGame = (gameState) => {
@@ -738,15 +769,8 @@ createApp({
                 : null;
 
             const players = gameState.players || [];
-            opponents.value = players
-                .filter((player) => String(player.userId) !== String(userId.value))
-                .map((player) => ({
-                    userId: player.userId,
-                    username: player.username,
-                    seatIndex: player.seatIndex,
-                    handCount: player.handCount ?? 0,
-                    saidUno: Boolean(player.saidUno)
-                }));
+            tablePlayers.value = players.map(mapTablePlayer);
+            opponents.value = tablePlayers.value.filter((player) => !player.isMe);
             const turnPlayer = players.find((player) => String(player.userId) === String(gameState.currentTurn));
             currentPlayerName.value = turnPlayer?.username || t("waitingPlayers");
 
@@ -1071,6 +1095,7 @@ createApp({
 
         onUnmounted(() => {
             cleanupRealtime();
+            clearAutoPenaltyTimer();
             if (beforeUnloadHandler) window.removeEventListener("beforeunload", beforeUnloadHandler);
             if (delegatedButtonHandler) document.removeEventListener("click", delegatedButtonHandler);
         });
@@ -1094,7 +1119,9 @@ createApp({
             drawPileSize,
             topCard,
             handCards,
+            tablePlayers,
             opponents,
+            playerCount,
             isMyTurn,
             turnLabel,
             selectedCard,
@@ -1102,6 +1129,7 @@ createApp({
             chosenColor,
             gameLog,
             logExpanded,
+            rulesExpanded,
             gameResult,
             toastMsg,
             colorMap,

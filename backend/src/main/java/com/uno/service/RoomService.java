@@ -47,6 +47,30 @@ public class RoomService {
         return roomRepository.save(room);
     }
 
+    public Map<String, Object> updateRoomConfigByAdmin(Long roomId,
+                                                       int maxPlayers,
+                                                       int totalRounds,
+                                                       int roundTimeLimitMinutes,
+                                                       GameMode gameMode) {
+        validateRoomConfig(maxPlayers, totalRounds, roundTimeLimitMinutes, gameMode);
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room does not exist: " + roomId));
+        if (room.getStatus() != RoomStatus.WAITING) {
+            throw new IllegalArgumentException("Only waiting rooms can be edited");
+        }
+
+        long playerCount = getPlayerCount(room);
+        if (playerCount > maxPlayers) {
+            throw new IllegalArgumentException("New max players cannot be lower than current players");
+        }
+
+        room.setMaxPlayers(maxPlayers);
+        room.setTotalRounds(totalRounds);
+        room.setRoundTimeLimitMinutes(roundTimeLimitMinutes);
+        room.setGameMode(gameMode == null ? GameMode.CLASSIC : gameMode);
+        return getRoomState(roomRepository.save(room));
+    }
+
     private void validateRoomConfig(int maxPlayers, int totalRounds, int roundTimeLimitMinutes, GameMode gameMode) {
         if (maxPlayers < 2 || maxPlayers > 8) {
             throw new IllegalArgumentException("Players must be between 2 and 8");

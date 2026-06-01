@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Uno 游戏 - 登录</title>
+    <title>UNO - 登录</title>
     <script src="https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios@1.5.0/dist/axios.min.js"></script>
     <link rel="stylesheet" href="css/common.css">
@@ -11,7 +11,6 @@
 </head>
 <body>
     <div id="app">
-        <!-- 背景动画 -->
         <div class="bg-animation">
             <div class="circle c1"></div>
             <div class="circle c2"></div>
@@ -24,7 +23,6 @@
                 <p class="subtitle">网页版卡牌游戏</p>
             </div>
 
-            <!-- 登录表单 -->
             <div v-if="!isRegister" class="form-card">
                 <h2>登录</h2>
                 <div class="input-group">
@@ -33,12 +31,11 @@
                 <div class="input-group">
                     <input v-model="loginForm.password" type="password" placeholder="密码" @keyup.enter="login">
                 </div>
-                <button class="btn-primary" @click="login">登 录</button>
+                <button class="btn-primary" @click="login">登录</button>
                 <p class="switch-text">没有账号？<a @click="isRegister = true">立即注册</a></p>
                 <p v-if="errorMsg" class="error-msg">{{ errorMsg }}</p>
             </div>
 
-            <!-- 注册表单 -->
             <div v-else class="form-card">
                 <h2>注册</h2>
                 <div class="input-group">
@@ -47,7 +44,7 @@
                 <div class="input-group">
                     <input v-model="registerForm.password" type="password" placeholder="密码（6-32位）" @keyup.enter="register">
                 </div>
-                <button class="btn-primary" @click="register">注 册</button>
+                <button class="btn-primary" @click="register">注册</button>
                 <p class="switch-text">已有账号？<a @click="isRegister = false">去登录</a></p>
                 <p v-if="errorMsg" class="error-msg">{{ errorMsg }}</p>
                 <p v-if="successMsg" class="success-msg">{{ successMsg }}</p>

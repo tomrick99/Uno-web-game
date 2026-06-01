@@ -71,9 +71,12 @@ public class GameService {
         return withRoomLock(roomId, () -> doJoinGame(roomId, userId));
     }
 
-    public Card playCard(Long gameId, Long userId, int cardIndex, CardColor chosenColor) {
+    public Map<String, Object> playCard(Long gameId, Long userId, int cardIndex, CardColor chosenColor) {
         Long roomId = getRoomIdByGameId(gameId);
-        return withRoomLock(roomId, () -> doPlayCard(gameId, userId, cardIndex, chosenColor));
+        return withRoomLock(roomId, () -> {
+            doPlayCard(gameId, userId, cardIndex, chosenColor);
+            return buildRealtimeSnapshot(roomId, gameId, userId);
+        });
     }
 
     public Card drawCard(Long gameId, Long userId) {
@@ -266,7 +269,7 @@ public class GameService {
         }
 
         int currentPlayerCount = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game).size();
-        if (currentPlayerCount >= 2 && game.getStatus() == GameStatus.WAITING) {
+        if (shouldStartGame(room, currentPlayerCount) && game.getStatus() == GameStatus.WAITING) {
             startGame(game);
             room.setStatus(RoomStatus.PLAYING);
             roomRepository.save(room);
@@ -651,16 +654,12 @@ public class GameService {
                 return new PlayValidation(false, "pending +4 chain only allows +4");
             }
 
-            if (card.type() == CardType.DRAW_TWO) {
+            if (canStackClassicDrawTwo(card)) {
                 logCanPlay(card, topCard, currentColor, game, true, "pending +2 chain allows +2");
                 return new PlayValidation(true, "pending +2 chain allows +2");
             }
-            if (card.type() == CardType.WILD_DRAW_FOUR) {
-                logCanPlay(card, topCard, currentColor, game, true, "pending +2 chain allows +4");
-                return new PlayValidation(true, "pending +2 chain allows +4");
-            }
-            logCanPlay(card, topCard, currentColor, game, false, "pending +2 chain only allows +2 or +4");
-            return new PlayValidation(false, "pending +2 chain only allows +2 or +4");
+            logCanPlay(card, topCard, currentColor, game, false, "pending +2 chain only allows +2");
+            return new PlayValidation(false, "pending +2 chain only allows +2");
         }
 
         if (isWildCard(card)) {
@@ -857,6 +856,14 @@ public class GameService {
         return candidate >= required;
     }
 
+    boolean canStackClassicDrawTwo(Card card) {
+        return card != null && card.type() == CardType.DRAW_TWO;
+    }
+
+    boolean canStackClassicWildDrawFour(Card card) {
+        return card != null && card.type() == CardType.WILD_DRAW_FOUR;
+    }
+
     private boolean isWildCard(Card card) {
         if (card == null || card.type() == null) {
             return false;
@@ -1039,6 +1046,10 @@ public class GameService {
         }
     }
 
+    boolean shouldStartGame(Room room, int currentPlayerCount) {
+        return room != null && currentPlayerCount >= room.getMaxPlayers();
+    }
+
     private void moveToNextPlayer(Game game) {
         List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
         if (players.isEmpty()) {
@@ -1059,10 +1070,39 @@ public class GameService {
             return;
         }
 
-        int nextIndex = game.isClockwise()
-                ? (currentIndex + 1) % players.size()
-                : (currentIndex - 1 + players.size()) % players.size();
+        int nextIndex = nextSeatIndex(currentIndex, players.size(), game.isClockwise(), 1);
         game.setCurrentTurn(players.get(nextIndex).getUser().getId());
+    }
+
+    int nextSeatIndex(int currentIndex, int playerCount, boolean clockwise, int steps) {
+        if (playerCount <= 0) {
+            return -1;
+        }
+        int direction = clockwise ? 1 : -1;
+        int offset = direction * Math.max(0, steps);
+        return Math.floorMod(currentIndex + offset, playerCount);
+    }
+
+    Long previewNextTurn(List<Long> orderedPlayerIds, Long currentTurn, boolean clockwise, CardType cardType) {
+        if (orderedPlayerIds == null || orderedPlayerIds.isEmpty()) {
+            return null;
+        }
+        int currentIndex = orderedPlayerIds.indexOf(currentTurn);
+        if (currentIndex < 0) {
+            return orderedPlayerIds.get(0);
+        }
+
+        boolean nextClockwise = clockwise;
+        int steps = 1;
+        if (cardType == CardType.SKIP) {
+            steps = 2;
+        } else if (cardType == CardType.REVERSE || cardType == CardType.WILD_REVERSE_DRAW_FOUR) {
+            nextClockwise = !clockwise;
+        } else if (cardType == CardType.SKIP_ALL) {
+            steps = 0;
+        }
+
+        return orderedPlayerIds.get(nextSeatIndex(currentIndex, orderedPlayerIds.size(), nextClockwise, steps));
     }
 
     private GamePlayer getNextPlayer(Game game) {
@@ -1084,9 +1124,7 @@ public class GameService {
             return players.get(0);
         }
 
-        int nextIndex = game.isClockwise()
-                ? (currentIndex + 1) % players.size()
-                : (currentIndex - 1 + players.size()) % players.size();
+        int nextIndex = nextSeatIndex(currentIndex, players.size(), game.isClockwise(), 1);
         return players.get(nextIndex);
     }
 

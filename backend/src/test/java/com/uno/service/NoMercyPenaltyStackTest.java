@@ -13,6 +13,16 @@ class NoMercyPenaltyStackTest {
     private final GameService gameService = new GameService(null, null, null, null, null, null);
 
     @Test
+    void plusFourCannotBeStackedWithPlusTwo() {
+        Card topCard = new Card(CardColor.WILD, CardType.WILD_DRAW_FOUR, 50);
+
+        assertFalse(gameService.canStackNoMercyPenalty(new Card(CardColor.RED, CardType.DRAW_TWO, 20), topCard));
+        assertTrue(gameService.canStackNoMercyPenalty(new Card(CardColor.RED, CardType.DRAW_FOUR, 40), topCard));
+        assertTrue(gameService.canStackNoMercyPenalty(new Card(CardColor.WILD, CardType.WILD_DRAW_SIX, 60), topCard));
+        assertTrue(gameService.canStackNoMercyPenalty(new Card(CardColor.WILD, CardType.WILD_DRAW_TEN, 100), topCard));
+    }
+
+    @Test
     void plusSixCanOnlyBeStackedWithSixOrHigher() {
         Card topCard = new Card(CardColor.WILD, CardType.WILD_DRAW_SIX, 60);
 

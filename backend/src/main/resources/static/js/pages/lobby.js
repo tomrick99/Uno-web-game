@@ -3,7 +3,7 @@ const apiBase = "/api";
 
 createApp({
     setup() {
-        const username = ref(localStorage.getItem("username") || "");
+        const username = ref("");
         const rooms = ref([]);
         const showCreate = ref(false);
         const maxPlayers = ref(2);
@@ -39,7 +39,8 @@ createApp({
                 create: "创建",
                 failedLoadRooms: "加载房间失败",
                 failedCreateRoom: "创建房间失败",
-                failedJoinRoom: "加入房间失败"
+                failedJoinRoom: "加入房间失败",
+                classic: "经典"
             },
             en: {
                 admin: "Admin",
@@ -64,7 +65,8 @@ createApp({
                 create: "Create",
                 failedLoadRooms: "Failed to load rooms",
                 failedCreateRoom: "Failed to create room",
-                failedJoinRoom: "Failed to join room"
+                failedJoinRoom: "Failed to join room",
+                classic: "Classic"
             }
         };
 
@@ -75,7 +77,7 @@ createApp({
         const isAdmin = computed(() => username.value.toLowerCase() === "admin");
         const t = (key) => messages[language.value]?.[key] || messages.en[key] || key;
         const languageLabel = computed(() => language.value === "zh" ? "EN" : "中文");
-        const modeLabel = (mode) => mode === "NO_MERCY" ? "No Mercy" : (language.value === "zh" ? "经典" : "Classic");
+        const modeLabel = (mode) => mode === "NO_MERCY" ? "No Mercy" : t("classic");
         const modeOptions = computed(() => [
             { value: "CLASSIC", label: modeLabel("CLASSIC") },
             { value: "NO_MERCY", label: modeLabel("NO_MERCY") }
@@ -93,33 +95,31 @@ createApp({
 
         const consumeLobbyNotice = () => {
             const notice = sessionStorage.getItem("lobbyNotice");
-            if (notice) {
-                infoMsg.value = notice;
-                sessionStorage.removeItem("lobbyNotice");
-                setTimeout(() => {
-                    if (infoMsg.value === notice) {
-                        infoMsg.value = "";
-                    }
-                }, 3500);
-            }
+            if (!notice) return;
+            infoMsg.value = notice;
+            sessionStorage.removeItem("lobbyNotice");
+            setTimeout(() => {
+                if (infoMsg.value === notice) infoMsg.value = "";
+            }, 3500);
         };
 
         const checkLogin = async () => {
+            localStorage.removeItem("userId");
+            localStorage.removeItem("username");
             try {
                 const res = await axios.get(`${apiBase}/user/me`);
                 if (res.data.code !== 200) {
                     window.location.href = "index.html";
-                    return;
+                    return false;
                 }
-                if (res.data.data?.username) {
-                    username.value = res.data.data.username;
-                    localStorage.setItem("username", res.data.data.username);
-                }
-                if (res.data.data?.id) {
-                    localStorage.setItem("userId", res.data.data.id);
-                }
+                const currentUser = res.data.data || {};
+                username.value = currentUser.username || "";
+                if (currentUser.id) localStorage.setItem("userId", currentUser.id);
+                if (currentUser.username) localStorage.setItem("username", currentUser.username);
+                return true;
             } catch (error) {
                 window.location.href = "index.html";
+                return false;
             }
         };
 
@@ -128,6 +128,7 @@ createApp({
                 const res = await axios.get(`${apiBase}/room/list`);
                 if (res.data.code === 200) {
                     rooms.value = res.data.data || [];
+                    errorMsg.value = "";
                 } else {
                     errorMsg.value = res.data.message || t("failedLoadRooms");
                 }
@@ -186,7 +187,8 @@ createApp({
 
         onMounted(async () => {
             applyLanguage();
-            await checkLogin();
+            const loggedIn = await checkLogin();
+            if (!loggedIn) return;
             consumeLobbyNotice();
             await loadRooms();
             roomsTimer = setInterval(loadRooms, 3000);

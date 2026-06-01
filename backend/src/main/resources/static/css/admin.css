@@ -55,6 +55,13 @@ body {
     margin-bottom: 16px;
 }
 
+.card-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
 .card-head h2 {
     font-size: 20px;
     margin-bottom: 6px;
@@ -86,9 +93,10 @@ body {
 }
 
 .btn-secondary,
-.btn-danger {
+.btn-danger,
+.btn-primary {
     padding: 10px 16px;
-    border-radius: 10px;
+    border-radius: 8px;
     color: white;
 }
 
@@ -96,8 +104,84 @@ body {
     background: rgba(52, 152, 219, 0.6);
 }
 
+.btn-secondary:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
 .btn-danger {
     background: rgba(231, 76, 60, 0.9);
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--green), #27ae60);
+}
+
+.btn-primary:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.72);
+}
+
+.modal-card {
+    width: min(460px, 100%);
+    padding: 28px;
+    border-radius: 8px;
+    background: var(--bg-dark2);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 18px 45px rgba(0, 0, 0, 0.35);
+}
+
+.modal-card h2 {
+    margin-bottom: 20px;
+    font-size: 24px;
+}
+
+.form-grid {
+    display: grid;
+    gap: 10px;
+}
+
+.form-grid label {
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+
+.form-grid select {
+    width: 100%;
+    min-height: 42px;
+    border-radius: 8px;
+    padding: 0 12px;
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.form-grid option {
+    color: #111;
+}
+
+.edit-hint {
+    margin: 14px 0 20px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
 }
 
 .empty-state {
