@@ -6,11 +6,13 @@
     <title>Uno - Lobby</title>
     <script src="https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios@1.5.0/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
     <link rel="stylesheet" href="css/common.css">
     <link rel="stylesheet" href="css/lobby.css">
 </head>
 <body>
-    <div id="app">
+    <div id="app" v-cloak>
         <div class="bg-animation">
             <div class="circle c1"></div>
             <div class="circle c2"></div>
@@ -30,7 +32,10 @@
         <main class="lobby-main">
             <div class="lobby-header">
                 <h2>{{ t("gameLobby") }}</h2>
-                <button class="btn-create" @click="showCreate = true">+ {{ t("createRoom") }}</button>
+                <div style="display:flex; gap:12px; align-items:center;">
+                    <span style="font-size:13px; opacity:0.8;">{{ t("syncStatus") }}: {{ connectionLabel }}</span>
+                    <button class="btn-create" @click="showCreate = true">+ {{ t("createRoom") }}</button>
+                </div>
             </div>
 
             <div class="room-list">
@@ -115,6 +120,7 @@
         <div v-if="infoMsg" class="toast info">{{ infoMsg }}</div>
     </div>
 
+    <script src="js/pages/realtime-utils.js"></script>
     <script src="js/pages/lobby.js"></script>
 </body>
 </html>

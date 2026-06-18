@@ -1,5 +1,8 @@
 package com.uno.service;
 
+import com.uno.dto.realtime.PrivateHandPatch;
+import com.uno.dto.realtime.PublicGamePatch;
+import com.uno.dto.realtime.PublicPlayerInfo;
 import com.uno.entity.Game;
 import com.uno.entity.GamePlayer;
 import com.uno.entity.Room;
@@ -30,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
@@ -52,6 +56,7 @@ public class GameService {
     private final GameWebSocketService wsService;
     private final RoomService roomService;
     private final ConcurrentHashMap<Long, ReentrantLock> roomLocks = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, AtomicLong> roomStateVersions = new ConcurrentHashMap<>();
 
     public GameService(GameRepository gameRepository,
                        GamePlayerRepository gamePlayerRepository,
@@ -73,20 +78,35 @@ public class GameService {
 
     public Map<String, Object> playCard(Long gameId, Long userId, int cardIndex, CardColor chosenColor) {
         Long roomId = getRoomIdByGameId(gameId);
-        return withRoomLock(roomId, () -> {
-            doPlayCard(gameId, userId, cardIndex, chosenColor);
-            return buildRealtimeSnapshot(roomId, gameId, userId);
-        });
+        long startedAt = System.nanoTime();
+        try {
+            return withRoomLock(roomId, () -> doPlayCard(gameId, userId, cardIndex, chosenColor));
+        } finally {
+            long costMs = (System.nanoTime() - startedAt) / 1_000_000;
+            log.info("[PERF] action=playCard roomId={} userId={} costMs={}", roomId, userId, costMs);
+        }
     }
 
-    public Card drawCard(Long gameId, Long userId) {
+    public Map<String, Object> drawCard(Long gameId, Long userId) {
         Long roomId = getRoomIdByGameId(gameId);
-        return withRoomLock(roomId, () -> doDrawCard(gameId, userId));
+        long startedAt = System.nanoTime();
+        try {
+            return withRoomLock(roomId, () -> doDrawCard(gameId, userId));
+        } finally {
+            long costMs = (System.nanoTime() - startedAt) / 1_000_000;
+            log.info("[PERF] action=drawCard roomId={} userId={} costMs={}", roomId, userId, costMs);
+        }
     }
 
     public Map<String, Object> drawPenalty(Long gameId, Long userId) {
         Long roomId = getRoomIdByGameId(gameId);
-        return withRoomLock(roomId, () -> doDrawPenalty(gameId, userId));
+        long startedAt = System.nanoTime();
+        try {
+            return withRoomLock(roomId, () -> doDrawPenalty(gameId, userId));
+        } finally {
+            long costMs = (System.nanoTime() - startedAt) / 1_000_000;
+            log.info("[PERF] action=drawPenalty roomId={} userId={} costMs={}", roomId, userId, costMs);
+        }
     }
 
     public Map<String, Object> readyForRematch(Long gameId, Long userId) {
@@ -106,13 +126,13 @@ public class GameService {
     public void deleteRoomByAdmin(Long roomId, String operatorName) {
         withRoomLock(roomId, () -> {
             Room room = roomRepository.findById(roomId)
-                    .orElseThrow(() -> new IllegalArgumentException("房间不存在"));
+                    .orElseThrow(() -> new IllegalArgumentException("Room not found"));
 
             Optional<Game> gameOpt = gameRepository.findByRoom(room).stream().findFirst();
             Long gameId = gameOpt.map(Game::getId).orElse(null);
-            String message = "房间已被管理员删除";
+            String message = "Room deleted by admin";
             if (operatorName != null && !operatorName.isBlank()) {
-                message = message + "（" + operatorName + "）";
+                message = message + " (" + operatorName + ")";
             }
 
             wsService.broadcastRoomDeleted(roomId, gameId, message);
@@ -130,31 +150,50 @@ public class GameService {
     @Transactional(readOnly = true)
     public Map<String, Object> getGameStateByRoomId(Long roomId) {
         Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new IllegalArgumentException("房间不存在: " + roomId));
+                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
         Game game = gameRepository.findByRoom(room).stream()
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("游戏不存在"));
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
         return getGameState(game.getId());
     }
 
     @Transactional(readOnly = true)
     public List<Map<String, Object>> getPlayerHandByRoomId(Long roomId, Long userId) {
         Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new IllegalArgumentException("房间不存在: " + roomId));
+                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
         Game game = gameRepository.findByRoom(room).stream()
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("游戏不存在"));
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
         return getPlayerHand(game.getId(), userId);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> getRealtimeSnapshotByRoomId(Long roomId, Long userId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
+        Optional<Game> gameOpt = gameRepository.findByRoom(room).stream().findFirst();
+        Long gameId = gameOpt.map(Game::getId).orElse(null);
+        Map<String, Object> snapshot = buildRealtimeSnapshot(roomId, gameId, userId);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> gameState = snapshot.get("gameState") instanceof Map<?, ?> map
+                ? (Map<String, Object>) map
+                : null;
+        log.info("[SYNC] action=snapshot roomId={} userId={} currentTurn={} version={}",
+                roomId,
+                userId,
+                gameState != null ? gameState.get("currentTurn") : null,
+                snapshot.get("version"));
+        return snapshot;
     }
 
     @Transactional(readOnly = true)
     public Map<String, Object> getGameState(Long gameId) {
         Game game = gameRepository.findById(gameId)
-                .orElseThrow(() -> new IllegalArgumentException("游戏不存在"));
-
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
         Map<String, Object> state = new LinkedHashMap<>();
+        Long roomId = game.getRoom().getId();
         state.put("gameId", game.getId());
-        state.put("roomId", game.getRoom().getId());
+        state.put("roomId", roomId);
         state.put("roomCode", game.getRoom().getRoomCode());
         state.put("roomStatus", game.getRoom().getStatus().name());
         state.put("maxPlayers", game.getRoom().getMaxPlayers());
@@ -206,16 +245,17 @@ public class GameService {
                 game.getStatus() == GameStatus.FINISHED
                         && !players.isEmpty()
                         && rematchReadyPlayerIds.size() == players.size());
+        state.put("version", getCurrentStateVersion(roomId, game));
         return state;
     }
 
     @Transactional(readOnly = true)
     public List<Map<String, Object>> getPlayerHand(Long gameId, Long userId) {
         Game game = gameRepository.findById(gameId)
-                .orElseThrow(() -> new IllegalArgumentException("游戏不存在"));
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
         User user = userRepository.getReferenceById(userId);
         GamePlayer player = gamePlayerRepository.findByGameAndUser(game, user)
-                .orElseThrow(() -> new IllegalArgumentException("玩家不在当前游戏中"));
+                .orElseThrow(() -> new IllegalArgumentException("Player is not in this game"));
 
         List<Card> hand = sortHandCards(player.getHandCards());
         List<Map<String, Object>> result = new ArrayList<>();
@@ -227,18 +267,33 @@ public class GameService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> buildRealtimeSnapshot(Long roomId, Long gameId, Long userId) {
-        Map<String, Object> snapshot = new LinkedHashMap<>();
-        snapshot.put("roomState", roomService.getRoomState(roomId));
-        snapshot.put("gameState", gameId != null ? getGameState(gameId) : null);
-        snapshot.put("handCards", gameId != null ? getPlayerHand(gameId, userId) : new ArrayList<>());
-        return snapshot;
+        long startedAt = System.nanoTime();
+        try {
+            Map<String, Object> snapshot = new LinkedHashMap<>();
+            snapshot.put("type", "FULL_SNAPSHOT");
+            Map<String, Object> roomState = roomService.getRoomState(roomId);
+            Map<String, Object> gameState = gameId != null ? getGameState(gameId) : null;
+            Long version = gameState != null
+                    ? asLong(gameState.get("version"))
+                    : getCurrentStateVersion(roomId, null);
+            roomState.put("version", version);
+            snapshot.put("roomState", roomState);
+            snapshot.put("gameState", gameState);
+            snapshot.put("handCards", gameId != null ? getPlayerHand(gameId, userId) : new ArrayList<>());
+            snapshot.put("version", version);
+            return snapshot;
+        } finally {
+            long costMs = (System.nanoTime() - startedAt) / 1_000_000;
+            log.info("[PERF] action=buildRealtimeSnapshot roomId={} gameId={} userId={} costMs={}",
+                    roomId, gameId, userId, costMs);
+        }
     }
 
     private Map<String, Object> doJoinGame(Long roomId, Long userId) {
         Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new IllegalArgumentException("房间不存在: " + roomId));
+                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("用户不存在: " + userId));
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
 
         Game game = gameRepository.findByRoom(room).stream()
                 .findFirst()
@@ -250,7 +305,8 @@ public class GameService {
                 throw new IllegalArgumentException("房间已开始或已结束，无法加入");
             }
 
-            int playerCount = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game).size();
+            List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+            int playerCount = players.size();
             if (playerCount >= room.getMaxPlayers()) {
                 throw new IllegalArgumentException("房间已满");
             }
@@ -263,9 +319,12 @@ public class GameService {
             gp.setRematchReady(false);
             gp.setHandCards(new ArrayList<>());
             gamePlayerRepository.save(gp);
+            bumpStateVersion(roomId);
             log.info("[UNO] room joined roomId={} players={}", roomId, playerCount + 1);
 
-            wsService.broadcastRoomState(roomService.getRoomState(room), "PLAYER_JOINED", user.getUsername() + " 加入了房间");
+            Map<String, Object> roomState = getRoomStateWithVersion(room, game);
+            wsService.broadcastRoomState(roomState, "PLAYER_JOINED", user.getUsername() + " joined the room");
+            wsService.broadcastLobbyRoomState(roomState, "PLAYER_JOINED", user.getUsername() + " joined the room");
         }
 
         int currentPlayerCount = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game).size();
@@ -273,37 +332,45 @@ public class GameService {
             startGame(game);
             room.setStatus(RoomStatus.PLAYING);
             roomRepository.save(room);
+            long version = bumpStateVersion(room.getId());
+            log.info("[SYNC] action=gameStarted roomId={} gameId={} currentTurn={} version={}",
+                    room.getId(), game.getId(), game.getCurrentTurn(), version);
 
-            wsService.broadcastRoomState(roomService.getRoomState(room), "GAME_STARTED", "游戏开始");
-            wsService.broadcastGameState(getGameState(game.getId()), "GAME_STARTED", "已发牌，轮到首位玩家");
-            broadcastHandsForGame(game, "HAND_SYNC");
+            Map<String, Object> roomState = getRoomStateWithVersion(room, game);
+            wsService.broadcastRoomState(roomState, "GAME_STARTED", "Game started");
+            wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Game started");
+            List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+            wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "GAME_STARTED", userId, user.getUsername(), "Game started"));
+            sendPrivateHandPatches(game, players, "HAND_UPDATED", true);
         } else if (game.getStatus() == GameStatus.PLAYING || game.getStatus() == GameStatus.FINISHED) {
-            wsService.broadcastRoomState(roomService.getRoomState(room), "PLAYER_SYNC", null);
+            Map<String, Object> roomState = getRoomStateWithVersion(room, game);
+            wsService.broadcastRoomState(roomState, "PLAYER_SYNC", null);
+            wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", null);
         }
 
         return buildRealtimeSnapshot(room.getId(), game.getId(), userId);
     }
 
-    private Card doPlayCard(Long gameId, Long userId, int cardIndex, CardColor chosenColor) {
+    private Map<String, Object> doPlayCard(Long gameId, Long userId, int cardIndex, CardColor chosenColor) {
         Game game = gameRepository.findById(gameId)
-                .orElseThrow(() -> new IllegalArgumentException("游戏不存在"));
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
 
         if (game.getStatus() != GameStatus.PLAYING) {
-            throw new IllegalArgumentException("当前游戏未开始或已结束");
+            throw new IllegalArgumentException("Game is not in playing state");
         }
         if (!userId.equals(game.getCurrentTurn())) {
             logUnoPlay(userId, null, getTopDiscard(game), game.getCurrentColor(), game.getPendingDrawCount(), false, false,
                     "not current player", game.getCurrentTurn());
-            throw new IllegalArgumentException("不是当前玩家，不能出牌");
+            throw new IllegalArgumentException("It is not your turn to play");
         }
 
         User user = userRepository.getReferenceById(userId);
         GamePlayer player = gamePlayerRepository.findByGameAndUser(game, user)
-                .orElseThrow(() -> new IllegalArgumentException("玩家不在当前游戏中"));
+                .orElseThrow(() -> new IllegalArgumentException("Player is not in this game"));
 
         List<Card> hand = sortHandCards(player.getHandCards());
         if (cardIndex < 0 || cardIndex >= hand.size()) {
-            throw new IllegalArgumentException("无效的卡牌索引");
+            throw new IllegalArgumentException("Invalid card index");
         }
 
         Card card = hand.get(cardIndex);
@@ -336,52 +403,67 @@ public class GameService {
         discardPile.add(card);
         game.setDiscardPileJson(toJson(discardPile));
 
+        Long oldCurrentPlayerId = game.getCurrentTurn();
         boolean handledTurnAdvance = processCardEffect(game, player, card, chosenColor, userId);
         if (!handledTurnAdvance) {
             moveToNextPlayer(game);
         }
         gameRepository.save(game);
+        long version = bumpStateVersion(game.getRoom().getId());
+        log.info("[SYNC] action=playCardApplied roomId={} gameId={} userId={} playedCard={} oldTurn={} newTurn={} currentPlayerIndex={} direction={} pendingPenalty={} gameStatus={} version={}",
+                game.getRoom().getId(),
+                game.getId(),
+                userId,
+                formatCard(card),
+                oldCurrentPlayerId,
+                game.getCurrentTurn(),
+                resolveCurrentPlayerIndex(game),
+                game.isClockwise() ? 1 : -1,
+                game.getPendingDrawCount(),
+                game.getStatus(),
+                version);
         logUnoPlay(userId, card, topCard, effectiveColor, game.getPendingDrawCount(), true, true, "accepted", game.getCurrentTurn());
 
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
         List<Card> remainingHand = player.getHandCards();
         if (remainingHand.isEmpty()) {
             game.setStatus(GameStatus.FINISHED);
             gameRepository.save(game);
             roomService.closeRoom(game.getRoom());
-            Map<String, Object> finishedGameState = getGameState(game.getId());
-            Map<String, Object> finishedRoomState = roomService.getRoomState(game.getRoom());
-            int playerCount = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game).size();
+            int playerCount = players.size();
             log.info("[UNO] game finished gameId={} roomId={} winner={}", game.getId(), game.getRoom().getId(), userId);
             log.info("[UNO] broadcasting FINISHED to /topic/games/{}", game.getId());
             log.info("[UNO] broadcasting room update to /topic/rooms/{}", game.getRoom().getId());
             log.info("[UNO] broadcast game finished gameId={} roomId={} players={}", game.getId(), game.getRoom().getId(), playerCount);
 
-            wsService.broadcastRoomState(roomService.getRoomState(game.getRoom()), "GAME_FINISHED", user.getUsername() + " 赢得了本局");
-            wsService.broadcastGameState(finishedGameState, "GAME_FINISHED", user.getUsername() + " wins!");
-            broadcastHandsForGame(game, "HAND_SYNC");
+            Map<String, Object> roomState = getRoomStateWithVersion(game.getRoom(), game);
+            wsService.broadcastRoomState(roomState, "GAME_FINISHED", user.getUsername() + " 赢得了本局");
+            wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Game finished");
+            wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "GAME_FINISHED", userId, user.getUsername(), user.getUsername() + " wins!"));
+            sendPrivateHandPatch(game, player, "HAND_UPDATED", true);
         } else {
             String display = card.type() == CardType.NUMBER ? String.valueOf(card.value()) : card.type().name();
-            wsService.broadcastGameState(getGameState(game.getId()), "CARD_PLAYED", user.getUsername() + " 打出了 " + display);
-            broadcastHandsForGame(game, "HAND_SYNC");
+            wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "CARD_PLAYED", userId, user.getUsername(), user.getUsername() + " played " + display));
+            sendPrivateHandPatch(game, player, "HAND_UPDATED", true);
         }
 
-        return card;
+        return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "CARD_PLAYED");
     }
 
-    private Card doDrawCard(Long gameId, Long userId) {
+    private Map<String, Object> doDrawCard(Long gameId, Long userId) {
         Game game = gameRepository.findById(gameId)
-                .orElseThrow(() -> new IllegalArgumentException("游戏不存在"));
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
 
         if (game.getStatus() != GameStatus.PLAYING) {
-            throw new IllegalArgumentException("当前游戏未开始或已结束");
+            throw new IllegalArgumentException("Game is not in playing state");
         }
         if (!userId.equals(game.getCurrentTurn())) {
-            throw new IllegalArgumentException("不是当前玩家，不能抽牌");
+            throw new IllegalArgumentException("It is not your turn to draw");
         }
 
         User user = userRepository.getReferenceById(userId);
         GamePlayer player = gamePlayerRepository.findByGameAndUser(game, user)
-                .orElseThrow(() -> new IllegalArgumentException("玩家不在当前游戏中"));
+                .orElseThrow(() -> new IllegalArgumentException("Player is not in this game"));
 
         if (hasPendingDraw(game)) {
             throw new IllegalArgumentException("Must resolve the pending draw stack by playing +2/+4 or drawing the penalty cards");
@@ -402,10 +484,23 @@ public class GameService {
         saveDeckState(game, deck);
         moveToNextPlayer(game);
         gameRepository.save(game);
+        long version = bumpStateVersion(game.getRoom().getId());
+        log.info("[SYNC] action=drawCardApplied roomId={} gameId={} userId={} drawnCard={} newTurn={} currentPlayerIndex={} direction={} pendingPenalty={} gameStatus={} version={}",
+                game.getRoom().getId(),
+                game.getId(),
+                userId,
+                formatCard(drawn),
+                game.getCurrentTurn(),
+                resolveCurrentPlayerIndex(game),
+                game.isClockwise() ? 1 : -1,
+                game.getPendingDrawCount(),
+                game.getStatus(),
+                version);
 
-        wsService.broadcastGameState(getGameState(game.getId()), "CARD_DRAWN", user.getUsername() + " 抽了一张牌");
-        broadcastHandsForGame(game, "HAND_SYNC");
-        return drawn;
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "CARD_DRAWN_PUBLIC", userId, user.getUsername(), user.getUsername() + " drew a card"));
+        sendPrivateHandPatch(game, player, "HAND_UPDATED", true);
+        return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "CARD_DRAWN_PUBLIC");
     }
 
     private Map<String, Object> doDrawPenalty(Long gameId, Long userId) {
@@ -435,11 +530,23 @@ public class GameService {
             game.setCurrentTurn(nextTurn);
         }
         gameRepository.save(game);
+        long version = bumpStateVersion(game.getRoom().getId());
 
-        log.info("[UNO] penalty drawn player={} drawCount={} nextTurn={}", userId, drawCount, game.getCurrentTurn());
-        wsService.broadcastGameState(getGameState(game.getId()), "PENALTY_DRAWN", user.getUsername() + " drew " + drawCount + " penalty cards");
-        broadcastHandsForGame(game, "HAND_SYNC");
-        return buildRealtimeSnapshot(game.getRoom().getId(), game.getId(), userId);
+        log.info("[SYNC] action=penaltyApplied roomId={} gameId={} userId={} drawCount={} newTurn={} currentPlayerIndex={} direction={} pendingPenalty={} gameStatus={} version={}",
+                game.getRoom().getId(),
+                game.getId(),
+                userId,
+                drawCount,
+                game.getCurrentTurn(),
+                resolveCurrentPlayerIndex(game),
+                game.isClockwise() ? 1 : -1,
+                game.getPendingDrawCount(),
+                game.getStatus(),
+                version);
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "PENALTY_UPDATED", userId, user.getUsername(), user.getUsername() + " drew " + drawCount + " penalty cards"));
+        sendPrivateHandPatch(game, player, "HAND_UPDATED", true);
+        return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "PENALTY_UPDATED");
     }
 
     private Map<String, Object> doReadyForRematch(Long gameId, Long userId) {
@@ -456,15 +563,19 @@ public class GameService {
         if (!player.isRematchReady()) {
             player.setRematchReady(true);
             gamePlayerRepository.save(player);
+            long version = bumpStateVersion(game.getRoom().getId());
+            log.info("[SYNC] action=rematchReady roomId={} gameId={} userId={} version={}",
+                    game.getRoom().getId(), game.getId(), userId, version);
         }
 
         if (allPlayersReadyForRematch(game)) {
             return doRestartGame(gameId, userId, true);
         }
 
-        wsService.broadcastGameState(getGameState(game.getId()), "REMATCH_READY",
-                user.getUsername() + " is ready for a rematch. Waiting for the other player.");
-        return buildRealtimeSnapshot(game.getRoom().getId(), game.getId(), userId);
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "REMATCH_READY", userId, user.getUsername(),
+                user.getUsername() + " is ready for a rematch. Waiting for the other player."));
+        return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "REMATCH_READY");
     }
 
     private Map<String, Object> doRestartGame(Long gameId, Long userId) {
@@ -473,10 +584,10 @@ public class GameService {
 
     private Map<String, Object> doRestartGame(Long gameId, Long userId, boolean rematchApproved) {
         Game game = gameRepository.findById(gameId)
-                .orElseThrow(() -> new IllegalArgumentException("游戏不存在"));
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
         User user = userRepository.getReferenceById(userId);
         gamePlayerRepository.findByGameAndUser(game, user)
-                .orElseThrow(() -> new IllegalArgumentException("只有本局玩家可以重新开始"));
+                .orElseThrow(() -> new IllegalArgumentException("Only current players can restart the game"));
 
         if (game.getStatus() != GameStatus.FINISHED) {
             throw new IllegalArgumentException("当前游戏还未结束");
@@ -492,12 +603,18 @@ public class GameService {
 
         startGame(game);
         roomService.reopenRoom(room);
+        long version = bumpStateVersion(room.getId());
+        log.info("[SYNC] action=gameRestarted roomId={} gameId={} userId={} currentTurn={} version={}",
+                room.getId(), game.getId(), userId, game.getCurrentTurn(), version);
 
-        wsService.broadcastRoomState(roomService.getRoomState(room), "GAME_RESTARTED", "再来一局开始");
-        wsService.broadcastGameState(getGameState(game.getId()), "GAME_RESTARTED", "已重新洗牌并发牌");
-        broadcastHandsForGame(game, "HAND_SYNC");
+        Map<String, Object> roomState = getRoomStateWithVersion(room, game);
+        wsService.broadcastRoomState(roomState, "GAME_RESTARTED", "Rematch started");
+        wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Rematch started");
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "GAME_RESTARTED", userId, user.getUsername(), "Game restarted"));
+        sendPrivateHandPatches(game, players, "HAND_UPDATED", true);
 
-        return buildRealtimeSnapshot(room.getId(), game.getId(), userId);
+        return operationAck(room.getId(), game.getId(), getCurrentStateVersion(room.getId(), game), "GAME_RESTARTED");
     }
 
     private Map<String, Object> doLeaveRoom(Long roomId, Long userId) {
@@ -509,6 +626,7 @@ public class GameService {
         Optional<Game> gameOpt = gameRepository.findByRoom(room).stream().findFirst();
         if (gameOpt.isEmpty()) {
             if (room.getHost().getId().equals(userId)) {
+                wsService.broadcastLobbyRoomRemoved(roomId, "ROOM_REMOVED", user.getUsername() + " left the room");
                 roomRepository.delete(room);
             }
             Map<String, Object> result = new LinkedHashMap<>();
@@ -545,9 +663,12 @@ public class GameService {
         if (room.getStatus() != RoomStatus.WAITING || game.getStatus() != GameStatus.WAITING) {
             room.setStatus(RoomStatus.CLOSED);
             roomRepository.save(room);
+            long version = bumpStateVersion(roomId);
+            log.info("[SYNC] action=playerLeftClosedRoom roomId={} gameId={} userId={} version={}",
+                    roomId, game.getId(), userId, version);
             log.info("[UNO] room closed or updated roomId={} status={}", roomId, room.getStatus());
             log.info("[UNO] broadcasting PLAYER_LEFT roomId={}", roomId);
-            wsService.broadcastRoomState(roomService.getRoomState(room), "PLAYER_LEFT", "Opponent left the room");
+            wsService.broadcastRoomState(getRoomStateWithVersion(room, game), "PLAYER_LEFT", "Opponent left the room");
             wsService.broadcastRoomDeleted(roomId, game.getId(), user.getUsername() + " left the room");
             gamePlayerRepository.deleteAllByGame(game);
             gameRepository.delete(game);
@@ -565,15 +686,20 @@ public class GameService {
         }
         room.setStatus(RoomStatus.WAITING);
         roomRepository.save(room);
+        long version = bumpStateVersion(roomId);
+        log.info("[SYNC] action=playerLeftWaitingRoom roomId={} gameId={} userId={} version={}",
+                roomId, game.getId(), userId, version);
 
         log.info("[UNO] room closed or updated roomId={} status={}", roomId, room.getStatus());
         log.info("[UNO] broadcasting PLAYER_LEFT roomId={}", roomId);
-        wsService.broadcastRoomState(roomService.getRoomState(room), "PLAYER_LEFT", user.getUsername() + " left the room");
+        Map<String, Object> roomState = getRoomStateWithVersion(room, game);
+        wsService.broadcastRoomState(roomState, "PLAYER_LEFT", user.getUsername() + " left the room");
+        wsService.broadcastLobbyRoomState(roomState, "PLAYER_LEFT", user.getUsername() + " left the room");
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("roomClosed", false);
         result.put("message", "Left room");
-        result.put("roomState", roomService.getRoomState(room));
+        result.put("roomState", roomState);
         return result;
     }
 
@@ -582,7 +708,9 @@ public class GameService {
         game.setRoom(room);
         game.setStatus(GameStatus.WAITING);
         game.setClockwise(true);
-        return gameRepository.save(game);
+        Game savedGame = gameRepository.save(game);
+        bumpStateVersion(room.getId());
+        return savedGame;
     }
 
     private void startGame(Game game) {
@@ -598,7 +726,7 @@ public class GameService {
     private void dealCards(Game game, Deck deck) {
         List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
         if (players.size() < 2) {
-            throw new IllegalStateException("至少需要两名玩家才能开始");
+            throw new IllegalStateException("At least two players are required to start the game");
         }
 
         for (GamePlayer player : players) {
@@ -606,7 +734,7 @@ public class GameService {
             for (int i = 0; i < 7; i++) {
                 Card card = deck.drawCard();
                 if (card == null) {
-                    throw new RuntimeException("牌堆已空，无法发牌");
+                    throw new RuntimeException("Deck is empty and cards cannot be dealt");
                 }
                 hand.add(card);
             }
@@ -770,13 +898,13 @@ public class GameService {
 
     private void validateChosenColor(Card card, CardColor chosenColor) {
         if (card == null || card.type() == null) {
-            throw new IllegalArgumentException("鏃犳晥鐨勫崱鐗?");
+            throw new IllegalArgumentException("Invalid card");
         }
         if (!requiresColorSelection(card)) {
             return;
         }
         if (chosenColor == null || chosenColor == CardColor.WILD) {
-            throw new IllegalArgumentException("涓囪兘鐗屽繀椤婚€夋嫨 RED / YELLOW / GREEN / BLUE");
+            throw new IllegalArgumentException("Choose a color: RED / YELLOW / GREEN / BLUE");
         }
     }
 
@@ -1226,15 +1354,203 @@ public class GameService {
         };
     }
 
-    private void broadcastHandsForGame(Game game, String event) {
-        for (GamePlayer gp : gamePlayerRepository.findByGameOrderBySeatIndexAsc(game)) {
-            wsService.broadcastPlayerHand(game.getId(), gp.getUser().getId(), getPlayerHand(game.getId(), gp.getUser().getId()), event);
+    private PublicGamePatch buildPublicGamePatch(Game game,
+                                                 List<GamePlayer> players,
+                                                 String type,
+                                                 Long actorUserId,
+                                                 String actorName,
+                                                 String message) {
+        long startedAt = System.nanoTime();
+        try {
+            Card topCard = getTopDiscard(game);
+            CardColor effectiveColor = resolveCurrentColor(game.getCurrentColor(), topCard);
+            Long currentPlayerId = game.getCurrentTurn();
+            Integer currentPlayerIndex = resolveCurrentPlayerIndex(game);
+            String currentPlayerName = null;
+            List<PublicPlayerInfo> publicPlayers = new ArrayList<>();
+            for (GamePlayer player : players) {
+                boolean currentPlayer = player.getUser().getId().equals(currentPlayerId);
+                if (currentPlayer) {
+                    currentPlayerName = player.getUser().getUsername();
+                }
+                publicPlayers.add(new PublicPlayerInfo(
+                        player.getUser().getId(),
+                        player.getUser().getUsername(),
+                        player.getHandCards() != null ? player.getHandCards().size() : 0,
+                        player.getSeatIndex(),
+                        player.isSaidUno(),
+                        currentPlayer
+                ));
+            }
+            return new PublicGamePatch(
+                    type,
+                    game.getRoom().getId(),
+                    game.getId(),
+                    getCurrentStateVersion(game.getRoom().getId(), game),
+                    System.currentTimeMillis(),
+                    actorUserId,
+                    actorName,
+                    currentPlayerId,
+                    currentPlayerName,
+                    currentPlayerIndex,
+                    effectiveColor.name(),
+                    game.isClockwise() ? 1 : -1,
+                    topCard != null ? cardToMap(topCard) : null,
+                    topCard != null ? cardToMap(topCard) : null,
+                    game.getPendingDrawCount(),
+                    game.getStatus().name(),
+                    game.getRoom().getStatus().name(),
+                    publicPlayers,
+                    message,
+                    false
+            );
+        } finally {
+            long costMs = (System.nanoTime() - startedAt) / 1_000_000;
+            log.info("[PERF] action=buildPublicGamePatch roomId={} gameId={} type={} costMs={}",
+                    game.getRoom().getId(),
+                    game.getId(),
+                    type,
+                    costMs);
         }
+    }
+
+    private void sendPrivateHandPatch(Game game, GamePlayer player, String type, boolean legacyFallback) {
+        if (game == null || player == null) {
+            return;
+        }
+        long startedAt = System.nanoTime();
+        try {
+            PrivateHandPatch patch = buildPrivateHandPatch(game, player, type);
+            wsService.sendPrivateHandPatch(
+                    player.getUser().getUsername(),
+                    game.getRoom().getId(),
+                    game.getId(),
+                    player.getUser().getId(),
+                    patch,
+                    legacyFallback
+            );
+        } finally {
+            long costMs = (System.nanoTime() - startedAt) / 1_000_000;
+            log.info("[PERF] action=sendPrivateHandPatch roomId={} gameId={} userId={} costMs={}",
+                    game.getRoom().getId(),
+                    game.getId(),
+                    player.getUser().getId(),
+                    costMs);
+        }
+    }
+
+    private void sendPrivateHandPatches(Game game, List<GamePlayer> players, String type, boolean legacyFallback) {
+        for (GamePlayer player : players) {
+            sendPrivateHandPatch(game, player, type, legacyFallback);
+        }
+    }
+
+    private PrivateHandPatch buildPrivateHandPatch(Game game, GamePlayer player, String type) {
+        long startedAt = System.nanoTime();
+        try {
+            long version = getCurrentStateVersion(game.getRoom().getId(), game);
+            return new PrivateHandPatch(
+                    type,
+                    game.getRoom().getId(),
+                    game.getId(),
+                    version,
+                    System.currentTimeMillis(),
+                    player.getUser().getId(),
+                    buildHandPatchId(game.getRoom().getId(), game.getId(), player.getUser().getId(), version, type),
+                    mapCards(sortHandCards(player.getHandCards())),
+                    null,
+                    hasPendingDraw(game) && game.getCurrentTurn() != null && game.getCurrentTurn().equals(player.getUser().getId()),
+                    game.getPendingDrawCount()
+            );
+        } finally {
+            long costMs = (System.nanoTime() - startedAt) / 1_000_000;
+            log.info("[PERF] action=buildPrivateHandPatch roomId={} gameId={} userId={} type={} costMs={}",
+                    game.getRoom().getId(),
+                    game.getId(),
+                    player.getUser().getId(),
+                    type,
+                    costMs);
+        }
+    }
+
+    private String buildHandPatchId(Long roomId, Long gameId, Long userId, long version, String type) {
+        return roomId + "-" + gameId + "-" + userId + "-" + version + "-" + type;
+    }
+
+    private List<Map<String, Object>> mapCards(List<Card> cards) {
+        List<Map<String, Object>> mapped = new ArrayList<>();
+        for (Card card : cards) {
+            mapped.add(cardToMap(card));
+        }
+        return mapped;
+    }
+
+    private Map<String, Object> operationAck(Long roomId, Long gameId, long version, String type) {
+        Map<String, Object> ack = new LinkedHashMap<>();
+        ack.put("type", type);
+        ack.put("roomId", roomId);
+        ack.put("gameId", gameId);
+        ack.put("version", version);
+        ack.put("accepted", true);
+        return ack;
+    }
+
+    private Map<String, Object> getRoomStateWithVersion(Room room, Game game) {
+        Map<String, Object> roomState = roomService.getRoomState(room);
+        roomState.put("version", getCurrentStateVersion(room.getId(), game));
+        return roomState;
+    }
+
+    long getCurrentStateVersion(Long roomId, Game game) {
+        if (roomId == null) {
+            return System.currentTimeMillis();
+        }
+        AtomicLong counter = roomStateVersions.computeIfAbsent(roomId, ignored -> new AtomicLong(seedStateVersion(game)));
+        return counter.get();
+    }
+
+    private long bumpStateVersion(Long roomId) {
+        AtomicLong counter = roomStateVersions.computeIfAbsent(roomId, ignored -> new AtomicLong(System.currentTimeMillis()));
+        return counter.updateAndGet(current -> Math.max(System.currentTimeMillis(), current + 1));
+    }
+
+    private long seedStateVersion(Game game) {
+        if (game != null && game.getCreatedAt() != null) {
+            return game.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+        }
+        return System.currentTimeMillis();
+    }
+
+    private Long asLong(Object value) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        if (value instanceof String text) {
+            try {
+                return Long.parseLong(text);
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private int resolveCurrentPlayerIndex(Game game) {
+        if (game == null || game.getCurrentTurn() == null) {
+            return -1;
+        }
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        for (int i = 0; i < players.size(); i++) {
+            if (players.get(i).getUser().getId().equals(game.getCurrentTurn())) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private Long getRoomIdByGameId(Long gameId) {
         Game game = gameRepository.findById(gameId)
-                .orElseThrow(() -> new IllegalArgumentException("游戏不存在"));
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
         return game.getRoom().getId();
     }
 

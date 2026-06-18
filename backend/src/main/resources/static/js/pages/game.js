@@ -1,5 +1,10 @@
-const { createApp, ref, computed, onMounted, onUnmounted } = Vue;
+const { createApp, ref, shallowRef, computed, onMounted, onUnmounted } = Vue;
 const apiBase = "/api";
+const realtimeUtils = window.UnoRealtimeUtils || {};
+const FALLBACK_THRESHOLD_MS = 5000;
+const RECONNECT_DELAY_MS = 3000;
+const FALLBACK_POLL_INTERVAL_MS = 5000;
+const websocketEndpoint = "/api/ws";
 
 createApp({
     setup() {
@@ -36,26 +41,45 @@ createApp({
         const rulesExpanded = ref(false);
         const gameResult = ref(null);
         const toastMsg = ref("");
+        const toastType = ref("info");
+        const toastVisible = ref(false);
         const language = ref(localStorage.getItem("unoLanguage") || "zh");
         const wsConnected = ref(false);
+        const connectionMode = ref("reconnecting");
+        const lastRoomVersion = ref(null);
+        const lastGameVersion = ref(null);
+        const lastHandVersion = ref(null);
+        const lastHandPatchId = ref(null);
+        const roomPlayerCount = ref(0);
         const leavingRoom = ref(false);
         const restartingGame = ref(false);
+        const drawingCard = ref(false);
         const drawingPenalty = ref(false);
+        const playingCard = ref(false);
         const hasLoadedHand = ref(false);
         const autoPenaltyInProgress = ref(false);
         const lastAutoPenaltyKey = ref("");
 
-        const stompClient = ref(null);
+        const stompClient = shallowRef(null);
         const roomSubscription = ref(null);
         const gameSubscription = ref(null);
         const handSubscription = ref(null);
+        const legacyHandSubscription = ref(null);
         const subscribedGameId = ref(null);
 
         let reconnectTimer = null;
         let pollTimer = null;
+        let fallbackActivationTimer = null;
         let autoPenaltyTimer = null;
         let delegatedButtonHandler = null;
         let beforeUnloadHandler = null;
+        let disconnectedAt = null;
+        let wsConnectInFlight = false;
+        let shouldReconnect = true;
+        let pendingRealtimeBatch = null;
+        let pendingRealtimeBatchTimer = null;
+        let gameStartConsistencyTimer = null;
+        let lastGameStartConsistencyKey = null;
 
         const colorMap = {
             RED: "#E74C3C",
@@ -70,7 +94,7 @@ createApp({
                 direction: "方向",
                 mode: "模式",
                 players: "玩家",
-                cardsUnit: "张",
+                cardsUnit: "张牌",
                 me: "我",
                 rounds: "局数",
                 currentColor: "当前颜色",
@@ -81,15 +105,17 @@ createApp({
                 drawPile: "抽牌堆",
                 discardPile: "弃牌堆",
                 waitingStart: "等待开始...",
-                selectedCard: "选中牌",
+                selectedCard: "已选卡牌",
                 rules: "规则",
                 gameLog: "游戏日志",
-                logHelp: "日志只记录最近动作，方便回看和排查；具体规则以上方说明为准。",
+                logHelp: "日志只显示最近动作，便于查看同步和排查问题。",
                 playCard: "出牌",
+                playing: "出牌中...",
                 winSubtitle: "本局获胜，准备再来一局吗？",
-                loseSubtitle: "本局结束，可以返回大厅或再来一局。",
+                loseSubtitle: "本局结束，可以返回大厅或申请再来一局。",
                 connected: "实时已连接",
-                polling: "实时离线，轮询中",
+                reconnecting: "正在重连",
+                fallback: "已切换轮询",
                 clockwise: "顺时针",
                 counterClockwise: "逆时针",
                 classic: "经典",
@@ -99,25 +125,25 @@ createApp({
                 blue: "蓝",
                 playable: "可以出",
                 notPlayable: "不能出",
-                chooseColor: "请选择颜色后出牌。",
+                chooseColor: "请选择颜色后再出牌。",
                 gameNotPlaying: "游戏尚未开始",
                 notYourTurn: "还没轮到你",
                 yourTurn: "你的回合",
                 waitingPlayers: "等待玩家",
                 turn: "轮到",
                 gameFinished: "游戏结束",
-                drawStack: "回应罚牌",
+                drawStack: "需要处理罚牌",
                 drawCards: "抽牌",
                 drawing: "抽牌中...",
                 acceptPenalty: "接受罚牌",
                 noStackable: "没有可叠加的罚牌，将自动抽 {count} 张。",
-                pendingEqualHigher: "待罚 {count} 张；只能叠加不小于上一张罚牌点数的罚牌。",
+                pendingEqualHigher: "待罚 {count} 张；只能叠加不小于上一张的罚牌。",
                 pendingPlus4: "待罚 {count} 张；只能叠加 +4。",
                 pendingPlus2: "待罚 {count} 张；只能叠加 +2。",
                 rematchReadyBoth: "双方都已准备，正在重开...",
                 rematchReadyYou: "你已准备，等待对方。",
                 rematchReadyOther: "对方已准备。",
-                rematchNeedBoth: "双方都选择再来一局后才会开始。",
+                rematchNeedBoth: "双方都同意后才会开始下一局。",
                 ready: "已准备",
                 submitting: "提交中...",
                 rematch: "再来一局",
@@ -126,21 +152,21 @@ createApp({
                 cardNumber: "数字牌：颜色相同或数字相同即可出。",
                 cardSkip: "跳过下一位玩家。",
                 cardReverse: "反转出牌方向。",
-                cardDrawTwo: "+2：下一位抽 2 张；Classic 中可按当前规则叠加。",
+                cardDrawTwo: "+2：下一位抽 2 张，Classic 叠加规则保持不变。",
                 cardDrawFour: "+4：No Mercy 彩色罚牌，下一位抽 4 张。",
-                cardDiscardAll: "DROP：打出后丢弃你手中所有同色牌。",
-                cardSkipAll: "SKIP ALL：跳过其他所有玩家，立刻回到你。",
+                cardDiscardAll: "DROP：打出后弃掉你手中所有同色牌。",
+                cardSkipAll: "SKIP ALL：跳过其他所有玩家，直接回到你。",
                 cardWild: "万能牌：选择下一种颜色。",
-                cardWildDrawFour: "+4 黑牌：选择颜色，下一位抽 4 张。",
-                cardWildDrawSix: "+6 黑牌：选择颜色，下一位抽 6 张。",
-                cardWildDrawTen: "+10 黑牌：选择颜色，下一位抽 10 张。",
-                cardWildReverseDrawFour: "+4 REV 黑牌：选择颜色，反转方向，下一位抽 4 张。",
+                cardWildDrawFour: "黑色 +4：选颜色，下一位抽 4 张。",
+                cardWildDrawSix: "黑色 +6：选颜色，下一位抽 6 张。",
+                cardWildDrawTen: "黑色 +10：选颜色，下一位抽 10 张。",
+                cardWildReverseDrawFour: "黑色 +4 REV：选颜色，反转方向并让下一位抽 4 张。",
                 classicRule1: "数字牌按颜色或数字匹配。",
-                classicRule2: "功能牌按颜色或同类型匹配，万能牌需要选色。",
-                classicRule3: "+2 和 +4 使用 Classic 叠加规则，Classic 不包含 No Mercy 新牌。",
-                noMercyRule1: "新增 DROP、SKIP ALL、彩色 +4，以及黑色 +6、+10、+4 REV。",
-                noMercyRule2: "黑色罚牌点击后需要选择颜色，牌面只显示点数。",
-                noMercyRule3: "罚牌叠加必须不小于上一张罚牌：+6 只能接 +6/+10，+10 只能接 +10。"
+                classicRule2: "功能牌按颜色或类型匹配；万能牌需要选色。",
+                classicRule3: "Classic 只保留现有 +2 / +4 叠加规则。",
+                noMercyRule1: "No Mercy 额外包含 DROP、SKIP ALL、彩色 +4 和黑色 +6 / +10 / +4 REV。",
+                noMercyRule2: "黑色罚牌打出后需要选颜色。",
+                noMercyRule3: "罚牌叠加必须不小于上一张罚牌数值。"
             },
             en: {
                 room: "Room",
@@ -163,10 +189,12 @@ createApp({
                 gameLog: "Game Log",
                 logHelp: "The log records recent actions for review; use the rules panel above for card meaning.",
                 playCard: "Play",
+                playing: "Playing...",
                 winSubtitle: "You won this game. Ready for another round?",
                 loseSubtitle: "Game over. You can return to the lobby or rematch.",
                 connected: "Realtime connected",
-                polling: "Realtime offline, polling",
+                reconnecting: "Reconnecting",
+                fallback: "Fallback polling",
                 clockwise: "Clockwise",
                 counterClockwise: "Counter-clockwise",
                 classic: "Classic",
@@ -267,10 +295,10 @@ createApp({
             Number(pendingDrawCount.value) > 0 && pendingDrawType.value !== "NONE"
         );
         const canDraw = computed(() =>
-            gameStatus.value === "PLAYING" && isMyTurn.value && !isPendingDrawStack.value
+            gameStatus.value === "PLAYING" && isMyTurn.value && !isPendingDrawStack.value && !drawingCard.value
         );
         const playerCount = computed(() =>
-            tablePlayers.value.length || opponents.value.length + 1
+            Number(roomPlayerCount.value || tablePlayers.value.length || opponents.value.length + 1)
         );
 
         const languageLabel = computed(() => language.value === "zh" ? "EN" : "中文");
@@ -284,9 +312,7 @@ createApp({
             return color;
         };
         const currentColorLabel = computed(() => colorName(currentColor.value));
-        const connectionLabel = computed(() =>
-            wsConnected.value ? t("connected") : t("polling")
-        );
+        const connectionLabel = computed(() => t(connectionMode.value));
 
         const getCardDisplay = (type, value) => {
             if (type === "NUMBER") return String(value);
@@ -544,11 +570,21 @@ createApp({
             return isMyTurn.value ? t("yourTurn") : `${t("turn")}: ${currentPlayerName.value}`;
         });
 
-        const showToast = (message) => {
+        const clearToast = () => {
+            toastVisible.value = false;
+            toastMsg.value = "";
+            toastType.value = "info";
+        };
+
+        const showToastMessage = (message, type = "info") => {
             if (!message) return;
             toastMsg.value = message;
+            toastType.value = type;
+            toastVisible.value = true;
             window.setTimeout(() => {
-                if (toastMsg.value === message) toastMsg.value = "";
+                if (toastMsg.value === message) {
+                    clearToast();
+                }
             }, 3000);
         };
 
@@ -651,8 +687,13 @@ createApp({
             totalRounds.value = 8;
             roundTimeLimitMinutes.value = 10;
             gameMode.value = "CLASSIC";
+            roomPlayerCount.value = 0;
             gameId.value = null;
             gameStatus.value = "WAITING";
+            lastRoomVersion.value = null;
+            lastGameVersion.value = null;
+            lastHandVersion.value = null;
+            lastHandPatchId.value = null;
             currentTurn.value = null;
             clockwise.value = true;
             direction.value = 1;
@@ -668,7 +709,7 @@ createApp({
             currentPlayerName.value = t("waitingPlayers");
             clearCardSelection();
             gameResult.value = null;
-            toastMsg.value = "";
+            clearToast();
             leavingRoom.value = false;
             restartingGame.value = false;
             drawingPenalty.value = false;
@@ -692,7 +733,21 @@ createApp({
                 clearTimeout(reconnectTimer);
                 reconnectTimer = null;
             }
-            for (const subscription of [roomSubscription, gameSubscription, handSubscription]) {
+            if (fallbackActivationTimer) {
+                clearTimeout(fallbackActivationTimer);
+                fallbackActivationTimer = null;
+            }
+            if (pendingRealtimeBatchTimer) {
+                clearTimeout(pendingRealtimeBatchTimer);
+                pendingRealtimeBatchTimer = null;
+            }
+            if (gameStartConsistencyTimer) {
+                clearTimeout(gameStartConsistencyTimer);
+                gameStartConsistencyTimer = null;
+            }
+            pendingRealtimeBatch = null;
+            lastGameStartConsistencyKey = null;
+            for (const subscription of [roomSubscription, gameSubscription, handSubscription, legacyHandSubscription]) {
                 if (subscription.value) {
                     subscription.value.unsubscribe();
                     subscription.value = null;
@@ -700,6 +755,8 @@ createApp({
             }
             subscribedGameId.value = null;
             wsConnected.value = false;
+            wsConnectInFlight = false;
+            connectionMode.value = "reconnecting";
             if (stompClient.value) {
                 try {
                     if (typeof stompClient.value.deactivate === "function") stompClient.value.deactivate();
@@ -728,28 +785,253 @@ createApp({
             isCurrentTurn: String(player.userId) === String(currentTurn.value)
         });
 
-        const renderRoom = (roomState) => {
+        const normalizeVersion = (value) => {
+            if (value === null || value === undefined || value === "") return null;
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : null;
+        };
+
+        const extractStateVersion = (payload) => normalizeVersion(
+            payload?.version
+            ?? payload?.gameState?.version
+            ?? payload?.roomState?.version
+        );
+
+        const mapIncomingPublicPlayers = (players) => (Array.isArray(players) ? players : []).map((player) => ({
+            userId: player.userId,
+            username: player.username,
+            handCount: player.handCount ?? 0,
+            seatIndex: player.seatIndex,
+            saidUno: Boolean(player.saidUno),
+            currentPlayer: Boolean(player.currentPlayer)
+        }));
+
+        const getChannelLabel = (payload, fallback = "unknown") => payload?.__channel || fallback;
+
+        const normalizeIncomingRealtimePayload = (payload) => {
+            if (!payload || typeof payload !== "object") return {};
+            if (payload.type === "RESYNC_REQUIRED") {
+                console.warn(`[UNO-SYNC] resync required source=${getChannelLabel(payload, "server")} reason=${payload.message || "server-requested"}`);
+                return {
+                    type: payload.type,
+                    event: payload.event || payload.type,
+                    message: payload.message,
+                    version: payload.version,
+                    resync: true
+                };
+            }
+            if (payload.type === "ROOM_DELETED" || payload.type === "FULL_SNAPSHOT") {
+                return payload;
+            }
+            if (Array.isArray(payload.handCards) && (payload.userId !== undefined || String(payload.type || "").startsWith("HAND_"))) {
+                return {
+                    event: payload.event || payload.type,
+                    message: payload.message,
+                    version: payload.version,
+                    handState: payload,
+                    handCards: payload.handCards,
+                    __channel: payload.__channel
+                };
+            }
+            if (payload.roomState || payload.gameState || Array.isArray(payload.handCards)) {
+                return payload;
+            }
+            if (payload.type === "ROOM_STATE" || payload.type === "LOBBY_EVENT") {
+                return {
+                    event: payload.event || payload.type,
+                    message: payload.message,
+                    version: payload.roomState?.version ?? payload.version,
+                    roomState: payload.roomState || payload,
+                    __channel: payload.__channel
+                };
+            }
+            if (payload.gameId !== undefined && (
+                payload.currentPlayerId !== undefined
+                || payload.currentColor !== undefined
+                || payload.pendingPenalty !== undefined
+                || payload.gameStatus !== undefined
+                || Array.isArray(payload.players)
+            )) {
+                return {
+                    event: payload.event || payload.type,
+                    message: payload.message,
+                    version: payload.version,
+                    __channel: payload.__channel,
+                    gameState: {
+                        gameId: payload.gameId,
+                        roomId: payload.roomId,
+                        roomStatus: payload.roomStatus,
+                        status: payload.gameStatus,
+                        currentTurn: payload.currentPlayerId,
+                        currentPlayerId: payload.currentPlayerId,
+                        currentPlayerIndex: payload.currentPlayerIndex,
+                        currentColor: payload.currentColor,
+                        direction: payload.direction,
+                        clockwise: payload.direction !== -1,
+                        topCard: payload.topCard || payload.discardTopCard || null,
+                        pendingDrawCount: payload.pendingPenalty,
+                        players: mapIncomingPublicPlayers(payload.players),
+                        version: payload.version
+                    }
+                };
+            }
+            if (payload.type) {
+                console.warn(`[UNO-SYNC-CHECK] unknown patch type=${payload.type} channel=${getChannelLabel(payload, "unknown")}`);
+            }
+            return payload;
+        };
+
+        const isGameStartEvent = (eventName) => [
+            "GAME_STARTED",
+            "GAME_RESTARTED",
+            "REMATCH_STARTED",
+            "REMATCH_READY"
+        ].includes(String(eventName || "").toUpperCase());
+
+        const requiresCompletePlayingState = (eventName) => [
+            "GAME_STARTED",
+            "GAME_RESTARTED",
+            "REMATCH_STARTED"
+        ].includes(String(eventName || "").toUpperCase());
+
+        const shouldApplyLayerVersion = (layer, incomingVersion, currentVersion, source, { force = false } = {}) => {
+            if (force) {
+                return true;
+            }
+            if (incomingVersion === null) {
+                console.warn(`[UNO-SYNC-CHECK] missing version layer=${layer} source=${source}`);
+                return true;
+            }
+            if (currentVersion !== null && incomingVersion <= currentVersion) {
+                console.info(`[UNO-SYNC-CHECK] ignored stale layer=${layer} source=${source} incomingVersion=${incomingVersion} currentVersion=${currentVersion}`);
+                return false;
+            }
+            return true;
+        };
+
+        const setDisplayedPlayers = (players) => {
+            tablePlayers.value = (players || []).map(mapTablePlayer);
+            opponents.value = tablePlayers.value.filter((player) => !player.isMe);
+        };
+
+        const mergeRoomPlayersIntoDisplay = (players) => {
+            const existingPlayers = new Map((tablePlayers.value || []).map((player) => [String(player.userId), player]));
+            tablePlayers.value = (players || []).map((player) => {
+                const basePlayer = mapTablePlayer(player);
+                const existingPlayer = existingPlayers.get(String(player.userId));
+                if (!existingPlayer) {
+                    return basePlayer;
+                }
+                return {
+                    ...basePlayer,
+                    handCount: existingPlayer.handCount ?? basePlayer.handCount,
+                    saidUno: existingPlayer.saidUno ?? basePlayer.saidUno,
+                    isCurrentTurn: existingPlayer.isCurrentTurn
+                };
+            });
+            opponents.value = tablePlayers.value.filter((player) => !player.isMe);
+        };
+
+        const applyGameId = (nextGameId, { source = "unknown", version = null, force = false, allowVersionlessReplace = false } = {}) => {
+            if (!nextGameId) return;
+            const currentGameId = gameId.value ? String(gameId.value) : null;
+            const incomingGameId = String(nextGameId);
+            if (currentGameId === incomingGameId) return;
+
+            const currentGameVersion = normalizeVersion(lastGameVersion.value);
+            const canReplace = force
+                || !currentGameId
+                || currentGameVersion === null
+                || (allowVersionlessReplace && version === null)
+                || version >= currentGameVersion;
+
+            if (!canReplace) {
+                console.info(`[UNO-SYNC-CHECK] ignored stale gameId source=${source} incomingGameId=${incomingGameId} currentGameId=${currentGameId} incomingVersion=${version ?? "none"} currentGameVersion=${currentGameVersion ?? "none"}`);
+                return;
+            }
+
+            console.info(`[UNO-SYNC-CHECK] gameId changed source=${source} oldGameId=${currentGameId ?? "none"} newGameId=${incomingGameId} version=${version ?? "none"}`);
+            gameId.value = nextGameId;
+            subscribeGameChannels(nextGameId);
+        };
+
+        const validateClientState = (source, context = {}) => {
+            const players = Array.isArray(tablePlayers.value) ? tablePlayers.value : [];
+            const resolvedPlayerCount = Number(roomPlayerCount.value || players.length || 0);
+            const turnPlayerIndex = players.findIndex((player) => String(player.userId) === String(currentTurn.value));
+            if (currentTurn.value && turnPlayerIndex < 0 && gameStatus.value === "PLAYING") {
+                console.warn(`[UNO-SYNC-CHECK] currentPlayerMissing source=${source} currentPlayerId=${currentTurn.value} players=${players.length}`);
+            }
+            if (resolvedPlayerCount && players.length && resolvedPlayerCount !== players.length) {
+                console.warn(`[UNO-SYNC-CHECK] playerCountMismatch source=${source} playerCount=${resolvedPlayerCount} playersLength=${players.length}`);
+            }
+            if (!Array.isArray(context.handCards) && context.previousHandCount > 0 && Array.isArray(handCards.value) && handCards.value.length === 0) {
+                console.error(`[UNO-SYNC-CHECK] handCardsClearedWithoutPayload source=${source} previousHandCount=${context.previousHandCount}`);
+            }
+        };
+
+        const resolveHandPatchDecision = (handState, source) => {
+            const currentVersion = normalizeVersion(lastHandVersion.value);
+            const decisionHelper = realtimeUtils.resolveHandPatchDecision;
+            const decision = typeof decisionHelper === "function"
+                ? decisionHelper({
+                    incomingVersion: handState?.version,
+                    currentVersion,
+                    incomingPatchId: handState?.patchId,
+                    lastPatchId: lastHandPatchId.value
+                })
+                : { apply: true, reason: "apply" };
+            const channel = getChannelLabel(handState, source);
+            const incomingVersion = normalizeVersion(handState?.version);
+            if (!decision.apply) {
+                if (decision.reason === "duplicate") {
+                    console.info(`[UNO-SYNC] hand patch ignored duplicate channel=${channel} version=${incomingVersion ?? "none"} patchId=${handState?.patchId || "none"}`);
+                } else if (decision.reason === "stale") {
+                    console.info(`[UNO-SYNC] hand patch ignored stale channel=${channel} incomingVersion=${incomingVersion ?? "none"} currentHandVersion=${currentVersion ?? "none"}`);
+                } else if (decision.reason === "missing-version") {
+                    console.warn(`[UNO-SYNC-CHECK] hand patch missing version channel=${channel} patchId=${handState?.patchId || "none"}`);
+                }
+            }
+            return decision;
+        };
+
+        const renderRoom = (roomState, { source = "unknown", version = null, forceGameBinding = false } = {}) => {
             if (!roomState) return;
             roomId.value = roomState.roomId || roomState.id || roomId.value;
             roomCode.value = roomState.roomCode || roomCode.value;
             roomStatus.value = roomState.status || roomStatus.value;
-            applyRoomConfig(roomState);
-            if (roomState.gameId) {
-                gameId.value = roomState.gameId;
-                subscribeGameChannels(roomState.gameId);
+            if (roomState.gameStatus) {
+                gameStatus.value = String(roomState.gameStatus).toUpperCase();
             }
+            applyRoomConfig(roomState);
+            roomPlayerCount.value = Number(roomState.playerCount ?? roomState.players?.length ?? roomPlayerCount.value ?? 0);
+            applyGameId(roomState.gameId, {
+                source: `${source}:room`,
+                version,
+                force: forceGameBinding || !gameId.value,
+                allowVersionlessReplace: false
+            });
             const players = roomState.players || [];
-            tablePlayers.value = players.map(mapTablePlayer);
-            opponents.value = tablePlayers.value.filter((player) => !player.isMe);
+            if (gameStatus.value === "PLAYING" && normalizeVersion(lastGameVersion.value) !== null && version !== null && version < normalizeVersion(lastGameVersion.value)) {
+                mergeRoomPlayersIntoDisplay(players);
+            } else {
+                setDisplayedPlayers(players);
+            }
         };
 
-        const renderGame = (gameState) => {
+        const renderGame = (gameState, { source = "unknown", version = null } = {}) => {
             if (!gameState) return;
             roomId.value = gameState.roomId || roomId.value;
             roomCode.value = gameState.roomCode || roomCode.value;
             roomStatus.value = gameState.roomStatus || roomStatus.value;
             applyRoomConfig(gameState);
-            gameId.value = gameState.gameId;
+            roomPlayerCount.value = Number(gameState.players?.length ?? roomPlayerCount.value ?? 0);
+            applyGameId(gameState.gameId, {
+                source: `${source}:game`,
+                version,
+                force: true,
+                allowVersionlessReplace: true
+            });
             gameStatus.value = String(gameState.status || gameState.phase || "WAITING").toUpperCase();
             currentTurn.value = gameState.currentTurn;
             clockwise.value = gameState.clockwise !== false;
@@ -769,8 +1051,7 @@ createApp({
                 : null;
 
             const players = gameState.players || [];
-            tablePlayers.value = players.map(mapTablePlayer);
-            opponents.value = tablePlayers.value.filter((player) => !player.isMe);
+            setDisplayedPlayers(players);
             const turnPlayer = players.find((player) => String(player.userId) === String(gameState.currentTurn));
             currentPlayerName.value = turnPlayer?.username || t("waitingPlayers");
 
@@ -779,16 +1060,126 @@ createApp({
                 gameResult.value = null;
                 restartingGame.value = false;
             }
-            subscribeGameChannels(gameState.gameId);
             refreshHandPlayability();
             syncPendingDrawUiState();
         };
 
+        const applyRealtimeState = (payload, source = "unknown") => {
+            if (!payload) return;
+            const normalizedPayload = normalizeIncomingRealtimePayload(payload);
+            const previousHandCount = Array.isArray(handCards.value) ? handCards.value.length : 0;
+            const eventName = normalizedPayload?.event || normalizedPayload?.type || "UNKNOWN";
+            const channel = getChannelLabel(normalizedPayload, source);
+            const isFullSnapshot = normalizedPayload?.type === "FULL_SNAPSHOT";
+            const fallbackVersion = normalizeVersion(normalizedPayload?.version);
+            const roomVersion = normalizeVersion(normalizedPayload?.roomState?.version ?? fallbackVersion);
+            const gameVersion = normalizeVersion(normalizedPayload?.gameState?.version ?? fallbackVersion);
+            const handVersion = normalizeVersion(normalizedPayload?.handState?.version ?? (Array.isArray(normalizedPayload?.handCards) ? fallbackVersion : null));
+            const incomingTurn = normalizedPayload?.gameState?.currentTurn ?? normalizedPayload?.roomState?.currentTurn ?? null;
+            console.info("[UNO-SYNC] applying state source=...", source, eventName);
+            console.debug(`[UNO-SYNC] applying state source=${source} roomVersion=${roomVersion ?? "none"} gameVersion=${gameVersion ?? "none"} currentTurn=${incomingTurn ?? "none"}`);
+
+            if (normalizedPayload.type === "FULL_SNAPSHOT") {
+                // Full snapshot is the only payload type allowed to refresh room, game, and hand together.
+            } else if (normalizedPayload.handState && (normalizedPayload.roomState || normalizedPayload.gameState)) {
+                console.warn(`[UNO-SYNC-CHECK] mixed patch payload source=${source} channel=${channel} type=${normalizedPayload.type || eventName}`);
+            }
+
+            if (normalizedPayload.roomState && shouldApplyLayerVersion("room", roomVersion, normalizeVersion(lastRoomVersion.value), source, { force: isFullSnapshot })) {
+                renderRoom(normalizedPayload.roomState, {
+                    source,
+                    version: roomVersion,
+                    forceGameBinding: isGameStartEvent(eventName)
+                });
+                if (roomVersion !== null) {
+                    lastRoomVersion.value = roomVersion;
+                }
+            }
+
+            if (normalizedPayload.gameState && shouldApplyLayerVersion("game", gameVersion, normalizeVersion(lastGameVersion.value), source, { force: isFullSnapshot })) {
+                const incomingGameState = normalizedPayload.gameState;
+                if (!incomingGameState.gameId || gameVersion === null || (incomingGameState.status === "PLAYING" && incomingGameState.currentTurn === undefined)) {
+                    console.warn(`[UNO-SYNC-CHECK] public patch incomplete source=${source} channel=${channel} gameId=${incomingGameState.gameId ?? "none"} version=${gameVersion ?? "none"} currentTurn=${incomingGameState.currentTurn ?? "none"}`);
+                    refreshFromServer({ reason: `incomplete-game-patch-${source}` });
+                } else {
+                    renderGame(normalizedPayload.gameState, {
+                        source,
+                        version: gameVersion
+                    });
+                    if (gameVersion !== null) {
+                        lastGameVersion.value = gameVersion;
+                    }
+                }
+            }
+
+            if (normalizedPayload.handState && !Array.isArray(normalizedPayload.handCards)) {
+                console.warn(`[UNO-SYNC-CHECK] private hand patch missing handCards channel=${channel} version=${handVersion ?? "none"}`);
+            } else if (Array.isArray(normalizedPayload.handCards)) {
+                const handDecision = isFullSnapshot
+                    ? { apply: true, reason: "full-snapshot" }
+                    : resolveHandPatchDecision(normalizedPayload.handState || normalizedPayload, source);
+                if ((isFullSnapshot || handDecision.apply) && shouldApplyLayerVersion("hand", handVersion, normalizeVersion(lastHandVersion.value), source, { force: isFullSnapshot })) {
+                    applyHandCards(normalizedPayload.handCards);
+                    if (handVersion !== null) {
+                        lastHandVersion.value = handVersion;
+                    }
+                    if (normalizedPayload.handState?.patchId) {
+                        lastHandPatchId.value = normalizedPayload.handState.patchId;
+                    }
+                    console.info(`[UNO-SYNC] hand patch applied channel=${channel} version=${handVersion ?? "none"} patchId=${normalizedPayload.handState?.patchId || "none"}`);
+                }
+            }
+            if (normalizedPayload.message) addLog(normalizedPayload.message);
+            if (normalizedPayload.resync) refreshFromServer({ reason: `resync-${source}` });
+            if (requiresCompletePlayingState(eventName)) {
+                const consistencyKey = `${String(eventName).toUpperCase()}:${fallbackVersion ?? roomVersion ?? gameVersion ?? "none"}`;
+                if (lastGameStartConsistencyKey !== consistencyKey) {
+                    lastGameStartConsistencyKey = consistencyKey;
+                    if (gameStartConsistencyTimer) clearTimeout(gameStartConsistencyTimer);
+                    gameStartConsistencyTimer = setTimeout(() => {
+                        gameStartConsistencyTimer = null;
+                        const incomplete = !gameId.value
+                            || gameStatus.value !== "PLAYING"
+                            || !currentTurn.value
+                            || !Array.isArray(handCards.value)
+                            || handCards.value.length === 0;
+                        if (incomplete) {
+                            console.warn(`[UNO-SYNC-CHECK] incomplete game start source=${source} event=${eventName} gameId=${gameId.value ?? "none"} status=${gameStatus.value} currentTurn=${currentTurn.value ?? "none"} handCount=${handCards.value?.length ?? 0}; requesting snapshot`);
+                            refreshFromServer({ reason: `incomplete-game-start-${source}` });
+                        }
+                    }, 200);
+                }
+            }
+            validateClientState(source, {
+                previousHandCount,
+                handCards: normalizedPayload.handCards
+            });
+        };
+
+        const flushRealtimeBatch = () => {
+            pendingRealtimeBatchTimer = null;
+            const batch = pendingRealtimeBatch;
+            pendingRealtimeBatch = null;
+            if (!batch) return;
+            applyRealtimeState(batch, "ws-batch");
+        };
+
+        const queueRealtimeBatch = (patch) => {
+            const mergeRealtimeBatch = realtimeUtils.mergeRealtimeBatch || ((currentBatch, nextPatch) => ({ ...(currentBatch || {}), ...(nextPatch || {}) }));
+            const normalizedPatch = normalizeIncomingRealtimePayload(patch);
+            pendingRealtimeBatch = mergeRealtimeBatch(pendingRealtimeBatch, normalizedPatch);
+            if (pendingRealtimeBatchTimer) return;
+            pendingRealtimeBatchTimer = setTimeout(flushRealtimeBatch, 40);
+        };
+
         const renderSnapshot = (snapshot) => {
             if (!snapshot) return;
-            if (snapshot.roomState) renderRoom(snapshot.roomState);
-            if (snapshot.gameState) renderGame(snapshot.gameState);
-            if (Array.isArray(snapshot.handCards)) applyHandCards(snapshot.handCards);
+            applyRealtimeState(snapshot, "snapshot");
+        };
+
+        const shouldRefreshAfterAck = (response) => {
+            if (!wsConnected.value) return true;
+            return response?.data?.data?.resync === true;
         };
 
         const returnToLobby = async ({ force = false, notifyServer = true, notice = "", skipConfirm = false } = {}) => {
@@ -798,6 +1189,7 @@ createApp({
                 if (!confirmed) return;
             }
             leavingRoom.value = true;
+            shouldReconnect = false;
             try {
                 if (notifyServer && roomId.value) {
                     const response = await axios.post(`${apiBase}/room/${roomId.value}/leave`);
@@ -829,6 +1221,7 @@ createApp({
             const message = error?.response?.data?.message || fallbackMessage;
             if ([400, 404].includes(error?.response?.status)) {
                 storeLobbyNotice(message || (language.value === "zh" ? "房间不可用" : "Room unavailable"));
+                shouldReconnect = false;
                 cleanupRealtime();
                 resetLocalState();
                 window.location.replace("lobby.html");
@@ -837,99 +1230,331 @@ createApp({
             return false;
         };
 
-        const syncHand = async () => {
+        const loadSnapshot = async () => {
+            if (!roomId.value) return null;
+            const response = await axios.get(`${apiBase}/game/room/${roomId.value}/snapshot`);
+            if (response.data.code === 200) {
+                const version = extractStateVersion(response.data.data);
+                console.debug(`[UNO-SYNC] applying state source=snapshot version=${version ?? "none"} currentTurn=${response.data.data?.gameState?.currentTurn ?? "none"}`);
+                renderSnapshot(response.data.data);
+                return response.data.data;
+            }
+            throw new Error(response.data.message || "Failed to load snapshot");
+        };
+
+        const refreshFromServer = async ({ reason = "manual" } = {}) => {
             if (!roomId.value) return;
             try {
-                const response = await axios.get(`${apiBase}/game/room/${roomId.value}/hand`);
-                if (response.data.code === 200) applyHandCards(response.data.data);
+                await loadSnapshot();
             } catch (error) {
-                if (!handleMissingRoomOrGame(error, language.value === "zh" ? "房间不可用" : "Room unavailable")) console.error(error);
+                if (!handleMissingRoomOrGame(error, language.value === "zh" ? "房间不可用" : "Room unavailable")) {
+                    console.error(`[UNO-SYNC] refresh failed reason=${reason}`, error);
+                }
             }
         };
 
-        const refreshFromServer = async () => {
-            if (!roomId.value) return;
-            try {
-                const response = await axios.get(`${apiBase}/game/room/${roomId.value}/state`);
-                if (response.data.code === 200) {
-                    renderGame(response.data.data);
-                    await syncHand();
-                }
-            } catch (error) {
-                if (!handleMissingRoomOrGame(error, language.value === "zh" ? "房间不可用" : "Room unavailable")) console.error(error);
+        const updateConnectionMode = () => {
+            if (typeof realtimeUtils.resolveConnectionMode === "function") {
+                connectionMode.value = realtimeUtils.resolveConnectionMode({
+                    connected: wsConnected.value,
+                    fallbackActive: Boolean(pollTimer)
+                });
+                return;
             }
+            connectionMode.value = wsConnected.value ? "connected" : (pollTimer ? "fallback" : "reconnecting");
+        };
+
+        const startFallbackPolling = () => {
+            if (pollTimer || wsConnected.value) return;
+            pollTimer = setInterval(() => {
+                if (!wsConnected.value) {
+                    refreshFromServer({ reason: "fallback-poll" });
+                }
+            }, FALLBACK_POLL_INTERVAL_MS);
+            console.info("[UNO-GAME] fallback polling started");
+            updateConnectionMode();
+        };
+
+        const scheduleFallbackActivation = () => {
+            if (fallbackActivationTimer || wsConnected.value) return;
+            fallbackActivationTimer = setTimeout(() => {
+                fallbackActivationTimer = null;
+                const now = Date.now();
+                const shouldEnable = typeof realtimeUtils.shouldEnableFallbackPolling === "function"
+                    ? realtimeUtils.shouldEnableFallbackPolling(disconnectedAt, now, FALLBACK_THRESHOLD_MS)
+                    : disconnectedAt && now - disconnectedAt >= FALLBACK_THRESHOLD_MS;
+                if (shouldEnable && !wsConnected.value) {
+                    startFallbackPolling();
+                    refreshFromServer({ reason: "fallback-start" });
+                }
+            }, FALLBACK_THRESHOLD_MS);
+        };
+
+        const clearRealtimeTimers = () => {
+            if (pollTimer) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+                console.info("[UNO-GAME] fallback polling stopped");
+            }
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+            if (fallbackActivationTimer) {
+                clearTimeout(fallbackActivationTimer);
+                fallbackActivationTimer = null;
+            }
+        };
+
+        const resetSubscriptions = () => {
+            for (const subscription of [roomSubscription, gameSubscription, handSubscription, legacyHandSubscription]) {
+                if (subscription.value) {
+                    try {
+                        subscription.value.unsubscribe();
+                    } catch (error) {
+                        console.error(error);
+                    }
+                    subscription.value = null;
+                }
+            }
+            subscribedGameId.value = null;
         };
 
         const subscribeRoomTopic = () => {
             if (!stompClient.value || !wsConnected.value || roomSubscription.value || !roomId.value) return;
+            console.info("[UNO-GAME] subscribed room topic", roomId.value);
+            console.info(`[UNO-SYNC] subscribed destination=/topic/rooms/${roomId.value}`);
             roomSubscription.value = stompClient.value.subscribe(`/topic/rooms/${roomId.value}`, (message) => {
-                const payload = JSON.parse(message.body);
+                const payload = JSON.parse(message.body || "{}");
+                console.debug(`[UNO-SYNC] ws message type=${payload.type || payload.event || "ROOM_STATE"} roomId=${payload.roomId ?? roomId.value} currentTurn=${payload?.gameState?.currentTurn ?? payload?.roomState?.currentTurn ?? "none"} version=${extractStateVersion(payload) ?? "none"}`);
                 if (payload.type === "ROOM_DELETED") {
                     handleRoomDeleted(payload);
                     return;
                 }
-                if (payload.roomState) renderRoom(payload.roomState);
-                if (payload.message) addLog(payload.message);
+                queueRealtimeBatch(payload);
             });
         };
 
         function subscribeGameChannels(nextGameId) {
             if (!nextGameId || !stompClient.value || !wsConnected.value) return;
-            if (String(subscribedGameId.value) === String(nextGameId) && gameSubscription.value && handSubscription.value) {
+            if (String(subscribedGameId.value) === String(nextGameId)
+                && gameSubscription.value
+                && handSubscription.value
+                && legacyHandSubscription.value) {
                 return;
+            }
+            if (subscribedGameId.value && String(subscribedGameId.value) !== String(nextGameId)) {
+                console.info(`[UNO-SYNC-CHECK] resubscribeGameTopic oldGameId=${subscribedGameId.value} newGameId=${nextGameId}`);
             }
             if (gameSubscription.value) gameSubscription.value.unsubscribe();
             if (handSubscription.value) handSubscription.value.unsubscribe();
+            if (legacyHandSubscription.value) legacyHandSubscription.value.unsubscribe();
             gameSubscription.value = null;
             handSubscription.value = null;
+            legacyHandSubscription.value = null;
             subscribedGameId.value = String(nextGameId);
+            console.info("[UNO-GAME] subscribed game topic", nextGameId);
+            console.info(`[UNO-SYNC] subscribed destination=/topic/games/${nextGameId}`);
 
             gameSubscription.value = stompClient.value.subscribe(`/topic/games/${nextGameId}`, (message) => {
-                const payload = JSON.parse(message.body);
+                const payload = JSON.parse(message.body || "{}");
+                console.debug(`[UNO-SYNC] ws message type=${payload.type || payload.event || "GAME_STATE"} roomId=${payload?.gameState?.roomId ?? roomId.value} currentTurn=${payload?.gameState?.currentTurn ?? "none"} version=${extractStateVersion(payload) ?? "none"}`);
                 if (payload.type === "ROOM_DELETED") {
                     handleRoomDeleted(payload);
                     return;
                 }
-                if (payload.gameState) renderGame(payload.gameState);
-                if (payload.message) addLog(payload.message);
+                queueRealtimeBatch(payload);
             });
 
-            handSubscription.value = stompClient.value.subscribe(`/topic/games/${nextGameId}/hands/${userId.value}`, (message) => {
-                const payload = JSON.parse(message.body);
-                if (Array.isArray(payload.handCards)) applyHandCards(payload.handCards);
+            console.info("[UNO-GAME] subscribed user hand queue", roomId.value);
+            console.info(`[UNO-SYNC] subscribed destination=/user/queue/room/${roomId.value}/hand`);
+            handSubscription.value = stompClient.value.subscribe(`/user/queue/room/${roomId.value}/hand`, (message) => {
+                const payload = JSON.parse(message.body || "{}");
+                payload.__channel = "userQueue";
+                console.info(`[UNO-SYNC] private hand received channel=userQueue version=${extractStateVersion(payload) ?? "none"} patchId=${payload.patchId || "none"}`);
+                applyRealtimeState(payload, "ws-hand-userQueue");
             });
+
+            if (userId.value) {
+                console.info(`[UNO-SYNC] subscribed destination=/topic/games/${nextGameId}/hands/${userId.value}`);
+                legacyHandSubscription.value = stompClient.value.subscribe(`/topic/games/${nextGameId}/hands/${userId.value}`, (message) => {
+                    const payload = JSON.parse(message.body || "{}");
+                    payload.__channel = "legacyFallback";
+                    console.info(`[UNO-SYNC] private hand received channel=legacyFallback version=${extractStateVersion(payload) ?? "none"} patchId=${payload.patchId || "none"}`);
+                    applyRealtimeState(payload, "ws-hand-legacyFallback");
+                });
+            }
         }
 
-        const connectWebSocket = () => {
-            const stompApi = window.Stomp || window.StompJs?.Stomp;
-            if (!stompApi) return;
-            const socket = new SockJS("/api/ws");
-            stompClient.value = stompApi.over(socket);
-            stompClient.value.debug = () => {};
-            stompClient.value.connect({}, () => {
-                wsConnected.value = true;
-                subscribeRoomTopic();
-                if (gameId.value) subscribeGameChannels(gameId.value);
-                addLog(t("connected"));
-            }, () => {
-                wsConnected.value = false;
-                roomSubscription.value = null;
-                gameSubscription.value = null;
-                handSubscription.value = null;
-                subscribedGameId.value = null;
-                if (reconnectTimer) clearTimeout(reconnectTimer);
-                reconnectTimer = setTimeout(connectWebSocket, 3000);
+        const handleSocketDisconnected = (client = null) => {
+            if (client && stompClient.value && stompClient.value !== client) return;
+            if (!shouldReconnect) return;
+            wsConnected.value = false;
+            wsConnectInFlight = false;
+            disconnectedAt = disconnectedAt || Date.now();
+            if (!client || stompClient.value === client) {
+                stompClient.value = null;
+            }
+            console.warn("[UNO-GAME] ws disconnected, reconnecting");
+            resetSubscriptions();
+            updateConnectionMode();
+            scheduleFallbackActivation();
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                connectWebSocket();
+            }, RECONNECT_DELAY_MS);
+            console.warn("[UNO-GAME] reconnect scheduled");
+        };
+
+        const scheduleReconnectAfterFailedConnect = () => {
+            if (!shouldReconnect || reconnectTimer) return;
+            reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                connectWebSocket();
+            }, RECONNECT_DELAY_MS);
+            console.warn("[UNO-GAME] reconnect scheduled");
+        };
+
+        const connectWebSocket = async ({ resyncOnConnect = true } = {}) => {
+            if (!shouldReconnect) return false;
+            if (wsConnected.value) return true;
+            if (wsConnectInFlight) return false;
+            const sockJsLoaded = typeof SockJS !== "undefined";
+            const stompJsLoaded = typeof StompJs !== "undefined";
+            console.info("[UNO-GAME] websocket endpoint =", websocketEndpoint);
+            console.info("[UNO-GAME] SockJS loaded =", sockJsLoaded);
+            console.info("[UNO-GAME] StompJs loaded =", stompJsLoaded);
+            if (!sockJsLoaded || !stompJsLoaded || !window.StompJs?.Client) {
+                console.error("[UNO-GAME] ws connect failed", {
+                    endpoint: websocketEndpoint,
+                    sockJsLoaded,
+                    stompJsLoaded
+                });
+                disconnectedAt = disconnectedAt || Date.now();
+                updateConnectionMode();
+                scheduleFallbackActivation();
+                scheduleReconnectAfterFailedConnect();
+                return false;
+            }
+
+            console.info("[UNO-GAME] connecting websocket...");
+            wsConnectInFlight = true;
+            connectionMode.value = "reconnecting";
+            return await new Promise((resolve) => {
+                let settled = false;
+                let client;
+                let connectTimeout = null;
+                const resolveOnce = (value) => {
+                    if (settled) return;
+                    settled = true;
+                    if (connectTimeout) {
+                        clearTimeout(connectTimeout);
+                        connectTimeout = null;
+                    }
+                    resolve(value);
+                };
+                const handleConnected = async () => {
+                    if (stompClient.value !== client) {
+                        resolveOnce(false);
+                        return;
+                    }
+                    wsConnected.value = true;
+                    wsConnectInFlight = false;
+                    disconnectedAt = null;
+                    clearRealtimeTimers();
+                    updateConnectionMode();
+                    resetSubscriptions();
+                    console.info("[UNO-GAME] ws connected");
+                    subscribeRoomTopic();
+                    if (gameId.value) subscribeGameChannels(gameId.value);
+                    addLog(t("connected"));
+                    if (resyncOnConnect) {
+                        await refreshFromServer({ reason: "ws-connected" });
+                    }
+                    resolveOnce(true);
+                };
+                const handleConnectError = (error) => {
+                    if (stompClient.value !== client) {
+                        resolveOnce(false);
+                        return;
+                    }
+                    console.error("[UNO-GAME] ws connect failed", error || { endpoint: websocketEndpoint });
+                    handleSocketDisconnected(client);
+                    resolveOnce(false);
+                };
+                const socketFactory = () => {
+                    const socket = new SockJS(websocketEndpoint);
+                    socket.onclose = (event) => {
+                        if (shouldReconnect && stompClient.value === client) {
+                            console.warn("[UNO-GAME] websocket closed", event);
+                        }
+                    };
+                    return socket;
+                };
+
+                client = new window.StompJs.Client({
+                    webSocketFactory: socketFactory,
+                    reconnectDelay: 0,
+                    debug: () => {},
+                    onConnect: handleConnected,
+                    onStompError: (frame) => {
+                        console.error("[UNO-GAME] stomp error", frame);
+                        handleConnectError(frame);
+                    },
+                    onWebSocketError: handleConnectError,
+                    onWebSocketClose: (event) => {
+                        if (shouldReconnect && stompClient.value === client) {
+                            console.warn("[UNO-GAME] websocket closed", event);
+                            handleSocketDisconnected(client);
+                            resolveOnce(false);
+                        }
+                    }
+                });
+                stompClient.value = client;
+                connectTimeout = setTimeout(() => {
+                    if (wsConnected.value || stompClient.value !== client) return;
+                    console.warn("[UNO-GAME] websocket connect timeout");
+                    stompClient.value = null;
+                    wsConnectInFlight = false;
+                    disconnectedAt = disconnectedAt || Date.now();
+                    try {
+                        client.deactivate();
+                    } catch (error) {
+                        console.error(error);
+                    }
+                    updateConnectionMode();
+                    startFallbackPolling();
+                    scheduleReconnectAfterFailedConnect();
+                    resolveOnce(false);
+                }, FALLBACK_THRESHOLD_MS);
+                try {
+                    client.activate();
+                } catch (error) {
+                    handleConnectError(error);
+                }
             });
         };
 
         const joinAndLoad = async () => {
+            if (!roomId.value) {
+                showToastMessage(language.value === "zh" ? "缺少 roomId，无法进入游戏页" : "Missing roomId");
+                console.error("[UNO] init failed", new Error("Missing roomId"));
+                return;
+            }
             try {
+                console.info("[UNO-GAME] joining room", roomId.value);
                 const response = await axios.post(`${apiBase}/game/${roomId.value}/join`);
-                if (response.data.code === 200) renderSnapshot(response.data.data);
-                else showToast(response.data.message || (language.value === "zh" ? "加入游戏失败" : "Failed to join game"));
+                console.info("[UNO-GAME] join response code =", response.data?.code);
+                if (response.data.code === 200) {
+                    renderSnapshot(response.data.data);
+                } else {
+                    showToastMessage(response.data.message || (language.value === "zh" ? "加入游戏失败" : "Failed to join game"));
+                }
             } catch (error) {
+                console.error("[UNO] init failed", error);
                 if (!handleMissingRoomOrGame(error, language.value === "zh" ? "房间不可用" : "Room unavailable")) {
-                    showToast(error.response?.data?.message || (language.value === "zh" ? "加入游戏失败" : "Failed to join game"));
+                    showToastMessage(error.response?.data?.message || (language.value === "zh" ? "加入游戏失败" : "Failed to join game"));
                 }
             }
         };
@@ -939,7 +1564,7 @@ createApp({
             if (!card) return;
             const result = evaluatePlayability(card, topCard.value, currentColor.value);
             if (!result.canPlay) {
-                showToast(getReasonText(result.reason));
+                showToastMessage(getReasonText(result.reason));
                 return;
             }
             if (selectedCard.value === index) {
@@ -956,50 +1581,59 @@ createApp({
         };
 
         const playSelectedCard = async () => {
-            if (selectedCard.value === null) return;
+            if (selectedCard.value === null || playingCard.value) return;
             const card = handCards.value[selectedCard.value];
             if (!card) return;
             if (needsColorPick.value && !chosenColor.value) {
-                showToast(t("chooseColor"));
+                showToastMessage(t("chooseColor"));
                 return;
             }
             if (!canPlaySelected.value) {
-                showToast(getReasonText(evaluatePlayability(card, topCard.value, currentColor.value).reason));
+                showToastMessage(getReasonText(evaluatePlayability(card, topCard.value, currentColor.value).reason));
                 return;
             }
+            playingCard.value = true;
             try {
                 const params = new URLSearchParams();
                 params.append("cardIndex", String(selectedCard.value));
                 if (chosenColor.value) params.append("chosenColor", chosenColor.value);
                 const response = await axios.post(`${apiBase}/game/${gameId.value}/play?${params.toString()}`);
                 if (response.data.code === 200) {
-                    renderSnapshot(response.data.data);
                     clearCardSelection();
+                    await refreshFromServer({ reason: "play-ack" });
                 } else {
-                    showToast(response.data.message || (language.value === "zh" ? "出牌失败" : "Failed to play card"));
+                    showToastMessage(response.data.message || (language.value === "zh" ? "出牌失败" : "Failed to play card"));
                     await refreshFromServer();
                 }
             } catch (error) {
-                showToast(error.response?.data?.message || (language.value === "zh" ? "出牌失败" : "Failed to play card"));
+                showToastMessage(error.response?.data?.message || (language.value === "zh" ? "出牌失败" : "Failed to play card"));
                 await refreshFromServer();
+            } finally {
+                playingCard.value = false;
             }
         };
 
         const drawCardAction = async () => {
+            if (drawingCard.value) return;
             if (!canDraw.value) {
-                showToast(isPendingDrawStack.value ? t("drawStack") : t("notYourTurn"));
+                showToastMessage(isPendingDrawStack.value ? t("drawStack") : t("notYourTurn"));
                 return;
             }
+            drawingCard.value = true;
             try {
                 const response = await axios.post(`${apiBase}/game/${gameId.value}/draw`);
                 if (response.data.code === 200) {
-                    renderSnapshot(response.data.data);
                     clearCardSelection();
+                    await refreshFromServer({ reason: "draw-ack" });
                 } else {
-                    showToast(response.data.message || (language.value === "zh" ? "抽牌失败" : "Failed to draw card"));
+                    showToastMessage(response.data.message || (language.value === "zh" ? "抽牌失败" : "Failed to draw card"));
+                    await refreshFromServer();
                 }
             } catch (error) {
-                showToast(error.response?.data?.message || (language.value === "zh" ? "抽牌失败" : "Failed to draw card"));
+                showToastMessage(error.response?.data?.message || (language.value === "zh" ? "抽牌失败" : "Failed to draw card"));
+                await refreshFromServer();
+            } finally {
+                drawingCard.value = false;
             }
         };
 
@@ -1015,15 +1649,15 @@ createApp({
             try {
                 const response = await axios.post(`${apiBase}/game/${gameId.value}/draw-penalty`);
                 if (response.data.code === 200) {
-                    renderSnapshot(response.data.data);
                     clearCardSelection();
+                    await refreshFromServer({ reason: "draw-penalty-ack" });
                 } else {
-                    showToast(response.data.message || (language.value === "zh" ? "抽取罚牌失败" : "Failed to draw penalty"));
+                    showToastMessage(response.data.message || (language.value === "zh" ? "抽取罚牌失败" : "Failed to draw penalty"));
                     if (autoTriggered) lastAutoPenaltyKey.value = "";
                     await refreshFromServer();
                 }
             } catch (error) {
-                showToast(error.response?.data?.message || (language.value === "zh" ? "抽取罚牌失败" : "Failed to draw penalty"));
+                showToastMessage(error.response?.data?.message || (language.value === "zh" ? "抽取罚牌失败" : "Failed to draw penalty"));
                 if (autoTriggered) lastAutoPenaltyKey.value = "";
                 await refreshFromServer();
             } finally {
@@ -1038,13 +1672,15 @@ createApp({
             try {
                 const response = await axios.post(`${apiBase}/game/${gameId.value}/rematch-ready`);
                 if (response.data.code === 200) {
-                    renderSnapshot(response.data.data);
                     addLog(t("rematch"));
+                    if (shouldRefreshAfterAck(response)) {
+                        await refreshFromServer({ reason: "rematch-ack" });
+                    }
                 } else {
-                    showToast(response.data.message || (language.value === "zh" ? "再来一局请求失败" : "Failed to request rematch"));
+                    showToastMessage(response.data.message || (language.value === "zh" ? "再来一局请求失败" : "Failed to request rematch"));
                 }
             } catch (error) {
-                showToast(error.response?.data?.message || (language.value === "zh" ? "再来一局请求失败" : "Failed to request rematch"));
+                showToastMessage(error.response?.data?.message || (language.value === "zh" ? "再来一局请求失败" : "Failed to request rematch"));
             } finally {
                 if (gameStatus.value === "FINISHED") restartingGame.value = false;
             }
@@ -1061,6 +1697,9 @@ createApp({
         };
 
         onMounted(async () => {
+            console.info("[UNO-GAME] game.js loaded");
+            console.info("[UNO-GAME] roomId from URL =", roomId.value);
+            console.info("[UNO-GAME] websocket endpoint =", websocketEndpoint);
             applyLanguage();
             try {
                 const response = await axios.get(`${apiBase}/user/me`);
@@ -1076,7 +1715,9 @@ createApp({
                     username.value = response.data.data.username;
                     localStorage.setItem("username", response.data.data.username);
                 }
+                console.info("[UNO-GAME] init currentUser ok", response.data.data?.username || "");
             } catch (error) {
+                console.error("[UNO] init failed", error);
                 window.location.replace("index.html");
                 return;
             }
@@ -1086,14 +1727,16 @@ createApp({
             delegatedButtonHandler = handleDelegatedButtonClick;
             document.addEventListener("click", delegatedButtonHandler);
 
-            connectWebSocket();
+            shouldReconnect = true;
+            const connected = await connectWebSocket({ resyncOnConnect: false });
+            if (!connected) {
+                updateConnectionMode();
+            }
             await joinAndLoad();
-            pollTimer = setInterval(() => {
-                if (!wsConnected.value) refreshFromServer();
-            }, 4000);
         });
 
         onUnmounted(() => {
+            shouldReconnect = false;
             cleanupRealtime();
             clearAutoPenaltyTimer();
             if (beforeUnloadHandler) window.removeEventListener("beforeunload", beforeUnloadHandler);
@@ -1132,11 +1775,16 @@ createApp({
             rulesExpanded,
             gameResult,
             toastMsg,
+            toastType,
+            toastVisible,
             colorMap,
             wsConnected,
+            connectionMode,
             leavingRoom,
             restartingGame,
+            drawingCard,
             drawingPenalty,
+            playingCard,
             canDraw,
             canPlaySelected,
             showPenaltyNotice,
@@ -1153,6 +1801,7 @@ createApp({
             t,
             toggleLanguage,
             colorName,
+            showToastMessage,
             selectCard,
             pickColor,
             playSelectedCard,

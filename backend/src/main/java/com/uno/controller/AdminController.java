@@ -6,6 +6,7 @@ import com.uno.entity.User;
 import com.uno.service.GameService;
 import com.uno.service.RoomService;
 import com.uno.service.UserService;
+import com.uno.websocket.GameWebSocketService;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -25,11 +26,16 @@ public class AdminController {
     private final RoomService roomService;
     private final GameService gameService;
     private final UserService userService;
+    private final GameWebSocketService wsService;
 
-    public AdminController(RoomService roomService, GameService gameService, UserService userService) {
+    public AdminController(RoomService roomService,
+                           GameService gameService,
+                           UserService userService,
+                           GameWebSocketService wsService) {
         this.roomService = roomService;
         this.gameService = gameService;
         this.userService = userService;
+        this.wsService = wsService;
     }
 
     private User getCurrentUser(HttpSession session) {
@@ -63,13 +69,16 @@ public class AdminController {
         }
 
         try {
-            return ApiResponse.success("Room updated", roomService.updateRoomConfigByAdmin(
+            Map<String, Object> roomState = roomService.updateRoomConfigByAdmin(
                     roomId,
                     request.getMaxPlayers(),
                     request.getTotalRounds(),
                     request.getRoundTimeLimitMinutes(),
                     request.getGameMode()
-            ));
+            );
+            wsService.broadcastRoomState(roomState, "ROOM_UPDATED", "Room updated");
+            wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Room updated");
+            return ApiResponse.success("Room updated", roomState);
         } catch (IllegalArgumentException e) {
             return ApiResponse.error(400, e.getMessage());
         } catch (RuntimeException e) {

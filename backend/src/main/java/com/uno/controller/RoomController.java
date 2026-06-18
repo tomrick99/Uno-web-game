@@ -8,7 +8,10 @@ import com.uno.entity.User;
 import com.uno.service.GameService;
 import com.uno.service.RoomService;
 import com.uno.service.UserService;
+import com.uno.websocket.GameWebSocketService;
 import jakarta.servlet.http.HttpSession;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -23,14 +26,21 @@ import java.util.Map;
 @RequestMapping("/api/room")
 public class RoomController {
 
+    private static final Logger log = LoggerFactory.getLogger(RoomController.class);
+
     private final RoomService roomService;
     private final UserService userService;
     private final GameService gameService;
+    private final GameWebSocketService wsService;
 
-    public RoomController(RoomService roomService, UserService userService, GameService gameService) {
+    public RoomController(RoomService roomService,
+                          UserService userService,
+                          GameService gameService,
+                          GameWebSocketService wsService) {
         this.roomService = roomService;
         this.userService = userService;
         this.gameService = gameService;
+        this.wsService = wsService;
     }
 
     private User getCurrentUser(HttpSession session) {
@@ -56,7 +66,10 @@ public class RoomController {
                     safeRequest.getTotalRounds(),
                     safeRequest.getRoundTimeLimitMinutes(),
                     safeRequest.getGameMode());
-            return ApiResponse.success("Room created", roomService.getRoomState(room));
+            gameService.joinGame(room.getId(), user.getId());
+            Map<String, Object> roomState = roomService.getRoomState(room.getId());
+            wsService.broadcastLobbyRoomState(roomState, "ROOM_CREATED", "Room created");
+            return ApiResponse.success("Room created", roomState);
         } catch (IllegalArgumentException e) {
             return ApiResponse.error(400, e.getMessage());
         }
@@ -95,7 +108,13 @@ public class RoomController {
 
     @GetMapping("/list")
     public ApiResponse<List<Map<String, Object>>> listRooms() {
-        return ApiResponse.success(roomService.getWaitingRoomStates());
+        long startedAt = System.nanoTime();
+        try {
+            return ApiResponse.success(roomService.getWaitingRoomStates());
+        } finally {
+            long costMs = (System.nanoTime() - startedAt) / 1_000_000;
+            log.info("[PERF] action=listRooms costMs={}", costMs);
+        }
     }
 
     @GetMapping("/{roomCode}")

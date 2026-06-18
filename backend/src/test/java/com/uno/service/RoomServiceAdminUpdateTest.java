@@ -12,6 +12,7 @@ import com.uno.repository.RoomRepository;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -63,6 +64,25 @@ class RoomServiceAdminUpdateTest {
                 () -> roomService.updateRoomConfigByAdmin(1L, 4, 16, 10, GameMode.NO_MERCY));
     }
 
+    @Test
+    void waitingRoomStatesUseActualGamePlayerCount() {
+        Room room = room(1L, RoomStatus.WAITING, 2);
+        Game game = new Game();
+        game.setId(20L);
+        game.setRoom(room);
+        GamePlayer alice = player(1L, "alice", game, 0);
+        GamePlayer bob = player(2L, "bob", game, 1);
+
+        when(roomRepository.findByStatus(RoomStatus.WAITING)).thenReturn(List.of(room));
+        when(gameRepository.findByRoom(room)).thenReturn(List.of(game));
+        when(gamePlayerRepository.findByGameOrderBySeatIndexAsc(game)).thenReturn(List.of(alice, bob));
+
+        List<Map<String, Object>> states = roomService.getWaitingRoomStates();
+
+        assertEquals(1, states.size());
+        assertEquals(2, states.get(0).get("playerCount"));
+    }
+
     private Room room(Long id, RoomStatus status, int maxPlayers) {
         User host = new User("admin", "pw");
         host.setId(10L);
@@ -76,5 +96,16 @@ class RoomServiceAdminUpdateTest {
         room.setRoundTimeLimitMinutes(10);
         room.setGameMode(GameMode.CLASSIC);
         return room;
+    }
+
+    private GamePlayer player(Long userId, String username, Game game, int seatIndex) {
+        User user = new User(username, "pw");
+        user.setId(userId);
+        GamePlayer player = new GamePlayer();
+        player.setGame(game);
+        player.setUser(user);
+        player.setSeatIndex(seatIndex);
+        player.setHandCards(List.of());
+        return player;
     }
 }

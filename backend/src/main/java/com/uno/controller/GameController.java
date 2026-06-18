@@ -32,12 +32,6 @@ public class GameController {
         return ApiResponse.error(401, "Please log in first");
     }
 
-    private Map<String, Object> buildSnapshotForPlayer(Long gameId, Long userId) {
-        Map<String, Object> gameState = gameService.getGameState(gameId);
-        Long roomId = ((Number) gameState.get("roomId")).longValue();
-        return gameService.buildRealtimeSnapshot(roomId, gameId, userId);
-    }
-
     @PostMapping("/{roomId}/join")
     public ApiResponse<Map<String, Object>> joinGame(@PathVariable Long roomId, HttpSession session) {
         Long userId = getCurrentUserId(session);
@@ -86,8 +80,7 @@ public class GameController {
         }
 
         try {
-            gameService.drawCard(gameId, userId);
-            return ApiResponse.success("Card drawn", buildSnapshotForPlayer(gameId, userId));
+            return ApiResponse.success("Card drawn", gameService.drawCard(gameId, userId));
         } catch (IllegalArgumentException e) {
             return ApiResponse.error(400, e.getMessage());
         } catch (RuntimeException e) {
@@ -163,6 +156,22 @@ public class GameController {
             return ApiResponse.success(gameService.getPlayerHandByRoomId(roomId, userId));
         } catch (IllegalArgumentException e) {
             return ApiResponse.error(400, e.getMessage());
+        }
+    }
+
+    @GetMapping("/room/{roomId}/snapshot")
+    public ApiResponse<Map<String, Object>> getRealtimeSnapshotByRoom(@PathVariable Long roomId, HttpSession session) {
+        Long userId = getCurrentUserId(session);
+        if (userId == null) {
+            return unauthorized();
+        }
+
+        try {
+            return ApiResponse.success(gameService.getRealtimeSnapshotByRoomId(roomId, userId));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.error(400, e.getMessage());
+        } catch (RuntimeException e) {
+            return ApiResponse.error(500, e.getMessage());
         }
     }
 

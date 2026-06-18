@@ -7,12 +7,12 @@
     <script src="https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios@1.5.0/dist/axios.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/stompjs@7.0.1/dist/stomp.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
     <link rel="stylesheet" href="css/common.css">
     <link rel="stylesheet" href="css/game.css">
 </head>
 <body>
-    <div id="app">
+    <div id="app" v-cloak>
         <div class="bg-animation">
             <div class="circle c1"></div>
             <div class="circle c2"></div>
@@ -74,15 +74,15 @@
         <section class="game-center">
             <div
                 class="draw-pile"
-                :class="{ disabled: !canDraw }"
-                :title="canDraw ? t('canDraw') : t('cannotDraw')"
+                :class="{ disabled: !canDraw || drawingCard }"
+                :title="drawingCard ? t('drawing') : (canDraw ? t('canDraw') : t('cannotDraw'))"
                 @click="drawCardAction"
             >
                 <div class="card card-back draw-card">
                     <div class="card-back-design">UNO</div>
                     <div class="draw-count">{{ drawPileSize }}</div>
                 </div>
-                <div class="pile-label">{{ canDraw ? t("clickDraw") : t("drawPile") }}</div>
+                <div class="pile-label">{{ drawingCard ? t("drawing") : (canDraw ? t("clickDraw") : t("drawPile")) }}</div>
             </div>
 
             <div class="discard-pile">
@@ -131,8 +131,8 @@
             </div>
 
             <div class="action-buttons" v-if="selectedCard !== null">
-                <button id="playSelectedCardButton" class="btn-play" :disabled="!canPlaySelected" @click="playSelectedCard">
-                    {{ t("playCard") }}
+                <button id="playSelectedCardButton" class="btn-play" :disabled="!canPlaySelected || playingCard" @click="playSelectedCard">
+                    {{ playingCard ? t("playing") : t("playCard") }}
                 </button>
                 <button v-if="needsColorPick" class="btn-color-pick" @click="pickColor('RED')">{{ colorName("RED") }}</button>
                 <button v-if="needsColorPick" class="btn-color-pick blue" @click="pickColor('BLUE')">{{ colorName("BLUE") }}</button>
@@ -177,9 +177,10 @@
             </div>
         </div>
 
-        <div v-if="toastMsg" class="toast-msg">{{ toastMsg }}</div>
+        <div v-if="toastVisible" class="toast-msg" :class="toastType">{{ toastMsg }}</div>
     </div>
 
+    <script src="js/pages/realtime-utils.js"></script>
     <script src="js/pages/game.js"></script>
 </body>
 </html>

@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="css/admin.css">
 </head>
 <body>
-    <div id="app">
+    <div id="app" v-cloak>
         <div class="page-shell">
             <header class="admin-topbar">
                 <div>
@@ -68,7 +68,7 @@
                             <option v-for="option in roundOptions" :key="option" :value="option">{{ option }} 局</option>
                         </select>
 
-                        <label>单局时间</label>
+                        <label>单局时长</label>
                         <select v-model.number="editForm.roundTimeLimitMinutes">
                             <option v-for="option in timeOptions" :key="option" :value="option">{{ option }} 分钟</option>
                         </select>
