@@ -10,7 +10,6 @@ createApp({
         const rooms = ref([]);
         const showCreate = ref(false);
         const maxPlayers = ref(2);
-        const totalRounds = ref(8);
         const roundTimeLimitMinutes = ref(10);
         const gameMode = ref("CLASSIC");
         const language = ref(localStorage.getItem("unoLanguage") || "zh");
@@ -40,14 +39,12 @@ createApp({
                 waiting: "等待中",
                 playing: "游戏中",
                 playersUnit: "人",
-                roundsUnit: "局",
                 minutesUnit: "分钟",
                 host: "房主",
                 unknown: "未知",
                 join: "加入",
                 customGame: "自定义游戏",
                 players: "玩家人数",
-                rounds: "局数",
                 roundTime: "单局时长",
                 mode: "模式",
                 cancel: "取消",
@@ -70,14 +67,12 @@ createApp({
                 waiting: "Waiting",
                 playing: "Playing",
                 playersUnit: "players",
-                roundsUnit: "rounds",
                 minutesUnit: "min",
                 host: "Host",
                 unknown: "Unknown",
                 join: "Join",
                 customGame: "Custom Game",
                 players: "Players",
-                rounds: "Rounds",
                 roundTime: "Round Time",
                 mode: "Mode",
                 cancel: "Cancel",
@@ -94,7 +89,6 @@ createApp({
         };
 
         const playerOptions = [2, 3, 4, 5, 6, 7, 8];
-        const roundOptions = [8, 16, 32];
         const timeOptions = [5, 10, 15];
 
         const isAdmin = computed(() => username.value.toLowerCase() === "admin");
@@ -386,7 +380,6 @@ createApp({
             try {
                 const payload = {
                     maxPlayers: maxPlayers.value,
-                    totalRounds: totalRounds.value,
                     roundTimeLimitMinutes: roundTimeLimitMinutes.value,
                     gameMode: gameMode.value
                 };
@@ -484,7 +477,6 @@ createApp({
             rooms,
             showCreate,
             maxPlayers,
-            totalRounds,
             roundTimeLimitMinutes,
             gameMode,
             language,
@@ -499,7 +491,6 @@ createApp({
             toggleLanguage,
             modeLabel,
             playerOptions,
-            roundOptions,
             timeOptions,
             modeOptions,
             createRoom,

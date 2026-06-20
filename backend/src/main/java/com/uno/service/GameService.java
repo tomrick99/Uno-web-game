@@ -169,21 +169,23 @@ public class GameService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> getRealtimeSnapshotByRoomId(Long roomId, Long userId) {
-        Room room = roomRepository.findById(roomId)
-                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
-        Optional<Game> gameOpt = gameRepository.findByRoom(room).stream().findFirst();
-        Long gameId = gameOpt.map(Game::getId).orElse(null);
-        Map<String, Object> snapshot = buildRealtimeSnapshot(roomId, gameId, userId);
-        @SuppressWarnings("unchecked")
-        Map<String, Object> gameState = snapshot.get("gameState") instanceof Map<?, ?> map
-                ? (Map<String, Object>) map
-                : null;
-        log.info("[SYNC] action=snapshot roomId={} userId={} currentTurn={} version={}",
-                roomId,
-                userId,
-                gameState != null ? gameState.get("currentTurn") : null,
-                snapshot.get("version"));
-        return snapshot;
+        return withRoomLock(roomId, () -> {
+            Room room = roomRepository.findById(roomId)
+                    .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
+            Optional<Game> gameOpt = gameRepository.findByRoom(room).stream().findFirst();
+            Long gameId = gameOpt.map(Game::getId).orElse(null);
+            Map<String, Object> snapshot = buildRealtimeSnapshot(roomId, gameId, userId);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> gameState = snapshot.get("gameState") instanceof Map<?, ?> map
+                    ? (Map<String, Object>) map
+                    : null;
+            log.info("[SYNC] action=snapshot roomId={} userId={} currentTurn={} version={}",
+                    roomId,
+                    userId,
+                    gameState != null ? gameState.get("currentTurn") : null,
+                    snapshot.get("version"));
+            return snapshot;
+        });
     }
 
     @Transactional(readOnly = true)
@@ -280,6 +282,9 @@ public class GameService {
             snapshot.put("roomState", roomState);
             snapshot.put("gameState", gameState);
             snapshot.put("handCards", gameId != null ? getPlayerHand(gameId, userId) : new ArrayList<>());
+            snapshot.put("roomVersion", version);
+            snapshot.put("gameVersion", version);
+            snapshot.put("handVersion", version);
             snapshot.put("version", version);
             return snapshot;
         } finally {
@@ -408,6 +413,8 @@ public class GameService {
         if (!handledTurnAdvance) {
             moveToNextPlayer(game);
         }
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        GamePlayer autoPenaltyPlayer = resolveUnstackablePenalty(game, players);
         gameRepository.save(game);
         long version = bumpStateVersion(game.getRoom().getId());
         log.info("[SYNC] action=playCardApplied roomId={} gameId={} userId={} playedCard={} oldTurn={} newTurn={} currentPlayerIndex={} direction={} pendingPenalty={} gameStatus={} version={}",
@@ -424,7 +431,6 @@ public class GameService {
                 version);
         logUnoPlay(userId, card, topCard, effectiveColor, game.getPendingDrawCount(), true, true, "accepted", game.getCurrentTurn());
 
-        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
         List<Card> remainingHand = player.getHandCards();
         if (remainingHand.isEmpty()) {
             game.setStatus(GameStatus.FINISHED);
@@ -445,6 +451,9 @@ public class GameService {
             String display = card.type() == CardType.NUMBER ? String.valueOf(card.value()) : card.type().name();
             wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "CARD_PLAYED", userId, user.getUsername(), user.getUsername() + " played " + display));
             sendPrivateHandPatch(game, player, "HAND_UPDATED", true);
+        }
+        if (autoPenaltyPlayer != null && autoPenaltyPlayer != player) {
+            sendPrivateHandPatch(game, autoPenaltyPlayer, "HAND_UPDATED", true);
         }
 
         return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "CARD_PLAYED");
@@ -524,11 +533,8 @@ public class GameService {
         int drawCount = game.getPendingDrawCount();
         drawCardsToPlayer(game, player, drawCount);
 
-        Long nextTurn = game.getLastPenaltyPlayerId();
         clearPendingDraw(game);
-        if (nextTurn != null) {
-            game.setCurrentTurn(nextTurn);
-        }
+        moveToNextPlayer(game);
         gameRepository.save(game);
         long version = bumpStateVersion(game.getRoom().getId());
 
@@ -626,6 +632,7 @@ public class GameService {
         Optional<Game> gameOpt = gameRepository.findByRoom(room).stream().findFirst();
         if (gameOpt.isEmpty()) {
             if (room.getHost().getId().equals(userId)) {
+                bumpStateVersion(roomId);
                 wsService.broadcastLobbyRoomRemoved(roomId, "ROOM_REMOVED", user.getUsername() + " left the room");
                 roomRepository.delete(room);
             }
@@ -649,6 +656,9 @@ public class GameService {
         List<GamePlayer> remainingPlayers = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
 
         if (remainingPlayers.isEmpty()) {
+            long version = bumpStateVersion(roomId);
+            log.info("[SYNC] action=lastPlayerLeft roomId={} gameId={} userId={} version={}",
+                    roomId, game.getId(), userId, version);
             log.info("[UNO] room closed or updated roomId={} status={}", roomId, RoomStatus.CLOSED);
             wsService.broadcastRoomDeleted(roomId, game.getId(), user.getUsername() + " left the room");
             gameRepository.delete(game);
@@ -773,21 +783,12 @@ public class GameService {
                 return new PlayValidation(false, "pending draw only allows equal or higher draw penalty cards");
             }
 
-            if (isWildDrawFourChain(game)) {
-                if (card.type() == CardType.WILD_DRAW_FOUR) {
-                    logCanPlay(card, topCard, currentColor, game, true, "pending +4 chain allows +4");
-                    return new PlayValidation(true, "pending +4 chain allows +4");
-                }
-                logCanPlay(card, topCard, currentColor, game, false, "pending +4 chain only allows +4");
-                return new PlayValidation(false, "pending +4 chain only allows +4");
+            if (canStackClassicPenalty(card, topCard)) {
+                logCanPlay(card, topCard, currentColor, game, true, "pending draw allows equal or higher draw penalty card");
+                return new PlayValidation(true, "pending draw allows equal or higher draw penalty card");
             }
-
-            if (canStackClassicDrawTwo(card)) {
-                logCanPlay(card, topCard, currentColor, game, true, "pending +2 chain allows +2");
-                return new PlayValidation(true, "pending +2 chain allows +2");
-            }
-            logCanPlay(card, topCard, currentColor, game, false, "pending +2 chain only allows +2");
-            return new PlayValidation(false, "pending +2 chain only allows +2");
+            logCanPlay(card, topCard, currentColor, game, false, "pending draw only allows equal or higher draw penalty cards");
+            return new PlayValidation(false, "pending draw only allows equal or higher draw penalty cards");
         }
 
         if (isWildCard(card)) {
@@ -934,8 +935,31 @@ public class GameService {
         game.setLastPenaltyPlayerId(null);
     }
 
-    private boolean isWildDrawFourChain(Game game) {
-        return game != null && game.getPendingDrawType() == PendingDrawType.WILD_DRAW_FOUR_CHAIN;
+    GamePlayer resolveUnstackablePenalty(Game game, List<GamePlayer> players) {
+        if (!hasPendingDraw(game) || game.getCurrentTurn() == null) {
+            return null;
+        }
+        GamePlayer target = players.stream()
+                .filter(player -> game.getCurrentTurn().equals(player.getUser().getId()))
+                .findFirst()
+                .orElse(null);
+        if (target == null || hasStackablePenaltyResponse(game, target)) {
+            return null;
+        }
+
+        int drawCount = game.getPendingDrawCount();
+        drawCardsToPlayer(game, target, drawCount);
+        clearPendingDraw(game);
+        moveToNextPlayer(game);
+        log.info("[UNO] auto penalty player={} drawCount={} nextPlayer={}",
+                target.getUser().getId(), drawCount, game.getCurrentTurn());
+        return target;
+    }
+
+    boolean hasStackablePenaltyResponse(Game game, GamePlayer player) {
+        Card topCard = getTopDiscard(game);
+        return player != null && player.getHandCards() != null && player.getHandCards().stream().anyMatch(card ->
+                isNoMercy(game) ? canStackNoMercyPenalty(card, topCard) : canStackClassicPenalty(card, topCard));
     }
 
     private void addPendingDraw(Game game, Long playerId, Card card, CardColor chosenColor) {
@@ -984,12 +1008,10 @@ public class GameService {
         return candidate >= required;
     }
 
-    boolean canStackClassicDrawTwo(Card card) {
-        return card != null && card.type() == CardType.DRAW_TWO;
-    }
-
-    boolean canStackClassicWildDrawFour(Card card) {
-        return card != null && card.type() == CardType.WILD_DRAW_FOUR;
+    boolean canStackClassicPenalty(Card card, Card topCard) {
+        return card != null
+                && (card.type() == CardType.DRAW_TWO || card.type() == CardType.WILD_DRAW_FOUR)
+                && penaltyValue(card) >= penaltyValue(topCard);
     }
 
     private boolean isWildCard(Card card) {

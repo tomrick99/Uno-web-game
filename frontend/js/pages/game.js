@@ -13,7 +13,6 @@ createApp({
         const roomCode = ref("");
         const roomStatus = ref("WAITING");
         const maxPlayers = ref(2);
-        const totalRounds = ref(8);
         const roundTimeLimitMinutes = ref(10);
         const gameMode = ref("CLASSIC");
         const userId = ref(localStorage.getItem("userId"));
@@ -97,7 +96,6 @@ createApp({
                 players: "玩家",
                 cardsUnit: "张牌",
                 me: "我",
-                rounds: "局数",
                 currentColor: "当前颜色",
                 backToLobby: "返回大厅",
                 canDraw: "可以抽牌",
@@ -176,7 +174,6 @@ createApp({
                 players: "Players",
                 cardsUnit: "cards",
                 me: "Me",
-                rounds: "Rounds",
                 currentColor: "Color",
                 backToLobby: "Back to Lobby",
                 canDraw: "You can draw",
@@ -345,6 +342,10 @@ createApp({
             return candidate >= getPenaltyValue(discardTopCard?.type);
         };
 
+        const canStackClassicPenalty = (card, discardTopCard) =>
+            ["DRAW_TWO", "WILD_DRAW_FOUR"].includes(card?.type)
+            && getPenaltyValue(card.type) >= getPenaltyValue(discardTopCard?.type);
+
         const formatCard = (card) => {
             if (!card) return "none";
             return `${card.color}_${card.type}_${card.value}`;
@@ -399,8 +400,9 @@ createApp({
                     : { canPlay: false, reason: "pending draw only allows equal or higher draw penalty cards" };
             }
             if (pendingDrawType.value === "DRAW_TWO_CHAIN") {
-                if (card.type === "DRAW_TWO") return { canPlay: true, reason: "pending +2 chain allows +2" };
-                return { canPlay: false, reason: "pending +2 chain only allows +2" };
+                return canStackClassicPenalty(card, topCard.value)
+                    ? { canPlay: true, reason: "pending draw allows equal or higher draw penalty card" }
+                    : { canPlay: false, reason: "pending draw only allows equal or higher draw penalty cards" };
             }
             return { canPlay: false, reason: "unknown pending draw state" };
         };
@@ -414,7 +416,7 @@ createApp({
                 return cards.some((card) => canStackNoMercyPenalty(card, topCard.value));
             }
             if (type === "DRAW_TWO_CHAIN") {
-                return cards.some((card) => card?.type === "DRAW_TWO");
+                return cards.some((card) => canStackClassicPenalty(card, topCard.value));
             }
             return false;
         };
@@ -540,7 +542,7 @@ createApp({
             if (pendingDrawType.value === "DRAW_STACK") {
                 return t("pendingEqualHigher", { count: pendingDrawCount.value });
             }
-            return t("pendingPlus2", { count: pendingDrawCount.value });
+            return t("pendingEqualHigher", { count: pendingDrawCount.value });
         };
 
         const showPenaltyNotice = computed(() => Boolean(getPenaltyNoticeText()));
@@ -685,7 +687,6 @@ createApp({
             roomCode.value = "";
             roomStatus.value = "WAITING";
             maxPlayers.value = 2;
-            totalRounds.value = 8;
             roundTimeLimitMinutes.value = 10;
             gameMode.value = "CLASSIC";
             roomPlayerCount.value = 0;
@@ -771,7 +772,6 @@ createApp({
 
         const applyRoomConfig = (state) => {
             maxPlayers.value = Number(state.maxPlayers || maxPlayers.value || 2);
-            totalRounds.value = Number(state.totalRounds || totalRounds.value || 8);
             roundTimeLimitMinutes.value = Number(state.roundTimeLimitMinutes || roundTimeLimitMinutes.value || 10);
             gameMode.value = state.gameMode || gameMode.value || "CLASSIC";
         };
@@ -808,6 +808,7 @@ createApp({
         }));
 
         const getChannelLabel = (payload, fallback = "unknown") => payload?.__channel || fallback;
+        const hasOwnField = (value, field) => Object.prototype.hasOwnProperty.call(value || {}, field);
 
         const normalizeIncomingRealtimePayload = (payload) => {
             if (!payload || typeof payload !== "object") return {};
@@ -853,27 +854,40 @@ createApp({
                 || payload.gameStatus !== undefined
                 || Array.isArray(payload.players)
             )) {
+                const gameState = {
+                    gameId: payload.gameId,
+                    version: payload.version
+                };
+                const copyField = (targetField, sourceField = targetField) => {
+                    if (hasOwnField(payload, sourceField)) {
+                        gameState[targetField] = payload[sourceField];
+                    }
+                };
+                copyField("roomId");
+                copyField("status", "gameStatus");
+                copyField("currentTurn", "currentPlayerId");
+                copyField("currentPlayerId");
+                copyField("currentPlayerIndex");
+                copyField("currentColor");
+                copyField("direction");
+                copyField("pendingDrawCount", "pendingPenalty");
+                if (hasOwnField(payload, "direction")) {
+                    gameState.clockwise = payload.direction !== -1;
+                }
+                if (hasOwnField(payload, "topCard")) {
+                    gameState.topCard = payload.topCard;
+                } else if (hasOwnField(payload, "discardTopCard")) {
+                    gameState.topCard = payload.discardTopCard;
+                }
+                if (Array.isArray(payload.players)) {
+                    gameState.players = mapIncomingPublicPlayers(payload.players);
+                }
                 return {
                     event: payload.event || payload.type,
                     message: payload.message,
                     version: payload.version,
                     __channel: payload.__channel,
-                    gameState: {
-                        gameId: payload.gameId,
-                        roomId: payload.roomId,
-                        roomStatus: payload.roomStatus,
-                        status: payload.gameStatus,
-                        currentTurn: payload.currentPlayerId,
-                        currentPlayerId: payload.currentPlayerId,
-                        currentPlayerIndex: payload.currentPlayerIndex,
-                        currentColor: payload.currentColor,
-                        direction: payload.direction,
-                        clockwise: payload.direction !== -1,
-                        topCard: payload.topCard || payload.discardTopCard || null,
-                        pendingDrawCount: payload.pendingPenalty,
-                        players: mapIncomingPublicPlayers(payload.players),
-                        version: payload.version
-                    }
+                    gameState
                 };
             }
             if (payload.type) {
@@ -895,16 +909,13 @@ createApp({
             "REMATCH_STARTED"
         ].includes(String(eventName || "").toUpperCase());
 
-        const shouldApplyLayerVersion = (layer, incomingVersion, currentVersion, source, { force = false } = {}) => {
-            if (force) {
-                return true;
-            }
+        const shouldApplyLayerVersion = (layer, incomingVersion, currentVersion, source) => {
             if (incomingVersion === null) {
                 console.warn(`[UNO-SYNC-CHECK] missing version layer=${layer} source=${source}`);
                 return true;
             }
-            if (currentVersion !== null && incomingVersion <= currentVersion) {
-                console.info(`[UNO-SYNC-CHECK] ignored stale layer=${layer} source=${source} incomingVersion=${incomingVersion} currentVersion=${currentVersion}`);
+            if (currentVersion !== null && incomingVersion < currentVersion) {
+                console.info(`[UNO-SYNC-CHECK] ignored stale layer=${layer} incoming=${incomingVersion} current=${currentVersion} source=${source}`);
                 return false;
             }
             return true;
@@ -984,14 +995,10 @@ createApp({
                 : { apply: true, reason: "apply" };
             const channel = getChannelLabel(handState, source);
             const incomingVersion = normalizeVersion(handState?.version);
-            if (!decision.apply) {
-                if (decision.reason === "duplicate") {
-                    console.info(`[UNO-SYNC] hand patch ignored duplicate channel=${channel} version=${incomingVersion ?? "none"} patchId=${handState?.patchId || "none"}`);
-                } else if (decision.reason === "stale") {
-                    console.info(`[UNO-SYNC] hand patch ignored stale channel=${channel} incomingVersion=${incomingVersion ?? "none"} currentHandVersion=${currentVersion ?? "none"}`);
-                } else if (decision.reason === "missing-version") {
-                    console.warn(`[UNO-SYNC-CHECK] hand patch missing version channel=${channel} patchId=${handState?.patchId || "none"}`);
-                }
+            if (!decision.apply && decision.reason === "duplicate") {
+                console.info(`[UNO-SYNC-CHECK] ignored duplicate hand patchId=${handState?.patchId || "none"}`);
+            } else if (!decision.apply && decision.reason === "stale") {
+                console.info(`[UNO-SYNC-CHECK] ignored stale layer=hand incoming=${incomingVersion ?? "none"} current=${currentVersion ?? "none"} source=${source} channel=${channel}`);
             }
             return decision;
         };
@@ -1001,59 +1008,53 @@ createApp({
             roomId.value = roomState.roomId || roomState.id || roomId.value;
             roomCode.value = roomState.roomCode || roomCode.value;
             roomStatus.value = roomState.status || roomStatus.value;
-            if (roomState.gameStatus) {
-                gameStatus.value = String(roomState.gameStatus).toUpperCase();
-            }
             applyRoomConfig(roomState);
             roomPlayerCount.value = Number(roomState.playerCount ?? roomState.players?.length ?? roomPlayerCount.value ?? 0);
-            applyGameId(roomState.gameId, {
-                source: `${source}:room`,
-                version,
-                force: forceGameBinding || !gameId.value,
-                allowVersionlessReplace: false
-            });
-            const players = roomState.players || [];
-            if (gameStatus.value === "PLAYING" && normalizeVersion(lastGameVersion.value) !== null && version !== null && version < normalizeVersion(lastGameVersion.value)) {
-                mergeRoomPlayersIntoDisplay(players);
-            } else {
-                setDisplayedPlayers(players);
+            if (roomState.gameId) {
+                applyGameId(roomState.gameId, {
+                    source: `${source}:room`,
+                    version,
+                    allowVersionlessReplace: forceGameBinding
+                });
+            }
+            if (Array.isArray(roomState.players)) {
+                if (gameStatus.value === "PLAYING") {
+                    mergeRoomPlayersIntoDisplay(roomState.players);
+                } else {
+                    setDisplayedPlayers(roomState.players);
+                }
             }
         };
 
-        const renderGame = (gameState, { source = "unknown", version = null } = {}) => {
+        const renderGame = (gameState, { source = "unknown", version = null, allowVersionlessGameBinding = false } = {}) => {
             if (!gameState) return;
-            roomId.value = gameState.roomId || roomId.value;
-            roomCode.value = gameState.roomCode || roomCode.value;
-            roomStatus.value = gameState.roomStatus || roomStatus.value;
-            applyRoomConfig(gameState);
-            roomPlayerCount.value = Number(gameState.players?.length ?? roomPlayerCount.value ?? 0);
             applyGameId(gameState.gameId, {
                 source: `${source}:game`,
                 version,
-                force: true,
-                allowVersionlessReplace: true
+                allowVersionlessReplace: allowVersionlessGameBinding
             });
-            gameStatus.value = String(gameState.status || gameState.phase || "WAITING").toUpperCase();
-            currentTurn.value = gameState.currentTurn;
-            clockwise.value = gameState.clockwise !== false;
-            direction.value = Number(gameState.direction || (clockwise.value ? 1 : -1));
-            currentColor.value = gameState.currentColor || "RED";
-            pendingDrawCount.value = Number(gameState.pendingDrawCount || 0);
-            pendingDrawType.value = gameState.pendingDrawType || "NONE";
-            lastPenaltyPlayerId.value = gameState.lastPenaltyPlayerId ?? null;
-            drawPileSize.value = Number(gameState.drawPileSize || 0);
-            topCard.value = gameState.topCard
-                ? {
+            if (hasOwnField(gameState, "status") || hasOwnField(gameState, "phase")) {
+                gameStatus.value = String(gameState.status ?? gameState.phase).toUpperCase();
+            }
+            if (hasOwnField(gameState, "currentTurn")) currentTurn.value = gameState.currentTurn;
+            if (hasOwnField(gameState, "clockwise")) clockwise.value = gameState.clockwise !== false;
+            if (hasOwnField(gameState, "direction")) direction.value = Number(gameState.direction);
+            if (hasOwnField(gameState, "currentColor") && gameState.currentColor != null) currentColor.value = gameState.currentColor;
+            if (hasOwnField(gameState, "pendingDrawCount")) pendingDrawCount.value = Number(gameState.pendingDrawCount ?? 0);
+            if (hasOwnField(gameState, "pendingDrawType")) pendingDrawType.value = gameState.pendingDrawType ?? "NONE";
+            if (hasOwnField(gameState, "lastPenaltyPlayerId")) lastPenaltyPlayerId.value = gameState.lastPenaltyPlayerId;
+            if (hasOwnField(gameState, "drawPileSize")) drawPileSize.value = Number(gameState.drawPileSize ?? 0);
+            if (hasOwnField(gameState, "topCard") && gameState.topCard) {
+                topCard.value = {
                     color: gameState.topCard.color,
                     type: gameState.topCard.type,
                     value: gameState.topCard.value,
                     display: getCardDisplay(gameState.topCard.type, gameState.topCard.value)
-                }
-                : null;
+                };
+            }
 
-            const players = gameState.players || [];
-            setDisplayedPlayers(players);
-            const turnPlayer = players.find((player) => String(player.userId) === String(gameState.currentTurn));
+            if (Array.isArray(gameState.players)) setDisplayedPlayers(gameState.players);
+            const turnPlayer = tablePlayers.value.find((player) => String(player.userId) === String(currentTurn.value));
             currentPlayerName.value = turnPlayer?.username || t("waitingPlayers");
 
             if (gameStatus.value === "FINISHED") handleGameFinished(gameState);
@@ -1073,9 +1074,9 @@ createApp({
             const channel = getChannelLabel(normalizedPayload, source);
             const isFullSnapshot = normalizedPayload?.type === "FULL_SNAPSHOT";
             const fallbackVersion = normalizeVersion(normalizedPayload?.version);
-            const roomVersion = normalizeVersion(normalizedPayload?.roomState?.version ?? fallbackVersion);
-            const gameVersion = normalizeVersion(normalizedPayload?.gameState?.version ?? fallbackVersion);
-            const handVersion = normalizeVersion(normalizedPayload?.handState?.version ?? (Array.isArray(normalizedPayload?.handCards) ? fallbackVersion : null));
+            const roomVersion = normalizeVersion(normalizedPayload?.roomVersion ?? normalizedPayload?.roomState?.version ?? fallbackVersion);
+            const gameVersion = normalizeVersion(normalizedPayload?.gameVersion ?? normalizedPayload?.gameState?.version ?? fallbackVersion);
+            const handVersion = normalizeVersion(normalizedPayload?.handVersion ?? normalizedPayload?.handState?.version ?? (Array.isArray(normalizedPayload?.handCards) ? fallbackVersion : null));
             const incomingTurn = normalizedPayload?.gameState?.currentTurn ?? normalizedPayload?.roomState?.currentTurn ?? null;
             console.info("[UNO-SYNC] applying state source=...", source, eventName);
             console.debug(`[UNO-SYNC] applying state source=${source} roomVersion=${roomVersion ?? "none"} gameVersion=${gameVersion ?? "none"} currentTurn=${incomingTurn ?? "none"}`);
@@ -1086,7 +1087,7 @@ createApp({
                 console.warn(`[UNO-SYNC-CHECK] mixed patch payload source=${source} channel=${channel} type=${normalizedPayload.type || eventName}`);
             }
 
-            if (normalizedPayload.roomState && shouldApplyLayerVersion("room", roomVersion, normalizeVersion(lastRoomVersion.value), source, { force: isFullSnapshot })) {
+            if (normalizedPayload.roomState && shouldApplyLayerVersion("room", roomVersion, normalizeVersion(lastRoomVersion.value), source)) {
                 renderRoom(normalizedPayload.roomState, {
                     source,
                     version: roomVersion,
@@ -1097,15 +1098,16 @@ createApp({
                 }
             }
 
-            if (normalizedPayload.gameState && shouldApplyLayerVersion("game", gameVersion, normalizeVersion(lastGameVersion.value), source, { force: isFullSnapshot })) {
+            if (normalizedPayload.gameState && shouldApplyLayerVersion("game", gameVersion, normalizeVersion(lastGameVersion.value), source)) {
                 const incomingGameState = normalizedPayload.gameState;
-                if (!incomingGameState.gameId || gameVersion === null || (incomingGameState.status === "PLAYING" && incomingGameState.currentTurn === undefined)) {
+                if (!incomingGameState.gameId || (incomingGameState.status === "PLAYING" && incomingGameState.currentTurn === undefined)) {
                     console.warn(`[UNO-SYNC-CHECK] public patch incomplete source=${source} channel=${channel} gameId=${incomingGameState.gameId ?? "none"} version=${gameVersion ?? "none"} currentTurn=${incomingGameState.currentTurn ?? "none"}`);
                     refreshFromServer({ reason: `incomplete-game-patch-${source}` });
                 } else {
                     renderGame(normalizedPayload.gameState, {
                         source,
-                        version: gameVersion
+                        version: gameVersion,
+                        allowVersionlessGameBinding: isGameStartEvent(eventName)
                     });
                     if (gameVersion !== null) {
                         lastGameVersion.value = gameVersion;
@@ -1116,10 +1118,11 @@ createApp({
             if (normalizedPayload.handState && !Array.isArray(normalizedPayload.handCards)) {
                 console.warn(`[UNO-SYNC-CHECK] private hand patch missing handCards channel=${channel} version=${handVersion ?? "none"}`);
             } else if (Array.isArray(normalizedPayload.handCards)) {
-                const handDecision = isFullSnapshot
-                    ? { apply: true, reason: "full-snapshot" }
-                    : resolveHandPatchDecision(normalizedPayload.handState || normalizedPayload, source);
-                if ((isFullSnapshot || handDecision.apply) && shouldApplyLayerVersion("hand", handVersion, normalizeVersion(lastHandVersion.value), source, { force: isFullSnapshot })) {
+                const handDecision = resolveHandPatchDecision({
+                    ...(normalizedPayload.handState || normalizedPayload),
+                    version: handVersion
+                }, source);
+                if (handDecision.apply && shouldApplyLayerVersion("hand", handVersion, normalizeVersion(lastHandVersion.value), source)) {
                     applyHandCards(normalizedPayload.handCards);
                     if (handVersion !== null) {
                         lastHandVersion.value = handVersion;
@@ -1768,7 +1771,6 @@ createApp({
             roomCode,
             roomStatus,
             maxPlayers,
-            totalRounds,
             roundTimeLimitMinutes,
             gameMode,
             language,

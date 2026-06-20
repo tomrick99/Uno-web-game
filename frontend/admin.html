@@ -18,6 +18,8 @@
                     <p>当前用户：{{ username }}</p>
                 </div>
                 <div class="admin-actions">
+                    <button class="btn-danger" :disabled="selectedRoomIds.length === 0 || deletingRooms" @click="deleteSelectedRooms">删除选中</button>
+                    <button class="btn-danger" :disabled="rooms.length === 0 || deletingRooms" @click="deleteAllRooms">全部删除</button>
                     <button class="btn-secondary" @click="loadRooms">刷新</button>
                     <button class="btn-secondary" @click="backToLobby">返回大厅</button>
                 </div>
@@ -28,6 +30,10 @@
                 <div v-else class="room-grid">
                     <article class="admin-room-card" v-for="room in rooms" :key="room.roomId">
                         <div class="card-head">
+                            <label class="room-select">
+                                <input type="checkbox" :value="room.roomId" v-model="selectedRoomIds">
+                                选择
+                            </label>
                             <div>
                                 <h2>#{{ room.roomId }} / {{ room.roomCode }}</h2>
                                 <p>{{ statusLabel(room.status) }} / {{ room.gameStatus || 'NO_GAME' }}</p>
@@ -40,7 +46,6 @@
                         <div class="room-meta">
                             <div>房主：{{ room.host?.username || '未知' }}</div>
                             <div>人数：{{ room.playerCount }} / {{ room.maxPlayers }}</div>
-                            <div>局数：{{ room.totalRounds }} 局</div>
                             <div>时间：{{ room.roundTimeLimitMinutes }} 分钟</div>
                             <div>模式：{{ modeLabel(room.gameMode) }}</div>
                             <div>创建时间：{{ formatTime(room.createdAt) }}</div>
@@ -61,11 +66,6 @@
                         <label>玩家人数</label>
                         <select v-model.number="editForm.maxPlayers">
                             <option v-for="option in playerOptions" :key="option" :value="option">{{ option }} 人</option>
-                        </select>
-
-                        <label>局数</label>
-                        <select v-model.number="editForm.totalRounds">
-                            <option v-for="option in roundOptions" :key="option" :value="option">{{ option }} 局</option>
                         </select>
 
                         <label>单局时长</label>

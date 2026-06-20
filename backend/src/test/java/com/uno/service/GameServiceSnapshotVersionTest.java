@@ -35,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class GameServiceSnapshotVersionTest {
@@ -85,6 +86,9 @@ class GameServiceSnapshotVersionTest {
         Map<String, Object> snapshotGameState = (Map<String, Object>) snapshot.get("gameState");
         assertEquals(snapshot.get("version"), snapshotRoomState.get("version"));
         assertEquals(snapshot.get("version"), snapshotGameState.get("version"));
+        assertEquals(snapshot.get("version"), snapshot.get("roomVersion"));
+        assertEquals(snapshot.get("version"), snapshot.get("gameVersion"));
+        assertEquals(snapshot.get("version"), snapshot.get("handVersion"));
     }
 
     @Test
@@ -263,6 +267,7 @@ class GameServiceSnapshotVersionTest {
                 );
         when(gamePlayerRepository.save(any(GamePlayer.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
+        long versionBeforeJoin = gameService.getCurrentStateVersion(30L, game);
         gameService.joinGame(30L, 2L);
 
         assertTrue(template.sentDestinations.contains("/topic/lobby"));
@@ -273,6 +278,7 @@ class GameServiceSnapshotVersionTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> roomState = (Map<String, Object>) lobbyPayload.get("roomState");
         assertEquals(2, roomState.get("playerCount"));
+        assertTrue(((Number) roomState.get("version")).longValue() > versionBeforeJoin);
     }
 
     @Test
@@ -311,6 +317,7 @@ class GameServiceSnapshotVersionTest {
         when(gamePlayerRepository.save(any(GamePlayer.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(roomRepository.save(any(Room.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
+        long versionBeforeLeave = gameService.getCurrentStateVersion(31L, game);
         gameService.leaveRoom(31L, 1L);
 
         assertTrue(template.sentDestinations.contains("/topic/lobby"));
@@ -321,6 +328,44 @@ class GameServiceSnapshotVersionTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> roomState = (Map<String, Object>) lobbyPayload.get("roomState");
         assertEquals(1, roomState.get("playerCount"));
+        assertTrue(((Number) roomState.get("version")).longValue() > versionBeforeLeave);
+    }
+
+    @Test
+    void leavingFinishedGameDeletesRoomAndRemovesLobbyCard() {
+        GameRepository gameRepository = mock(GameRepository.class);
+        GamePlayerRepository gamePlayerRepository = mock(GamePlayerRepository.class);
+        RoomRepository roomRepository = mock(RoomRepository.class);
+        UserRepository userRepository = mock(UserRepository.class);
+        RecordingTemplate template = new RecordingTemplate();
+        GameWebSocketService wsService = new GameWebSocketService(template);
+        RoomService roomService = new RoomService(roomRepository, gameRepository, gamePlayerRepository);
+        GameService gameService = new GameService(gameRepository, gamePlayerRepository, roomRepository, userRepository, wsService, roomService);
+
+        User alice = buildUser(1L, "alice");
+        User bob = buildUser(2L, "bob");
+        Room room = buildRoom(33L, "ROOM33", RoomStatus.CLOSED);
+        room.setHost(alice);
+        Game game = buildGame(43L, room, GameStatus.FINISHED, null);
+        GamePlayer alicePlayer = buildPlayer(game, alice, 0, List.of());
+        GamePlayer bobPlayer = buildPlayer(game, bob, 1, List.of());
+
+        when(roomRepository.findById(33L)).thenReturn(Optional.of(room));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(alice));
+        when(gameRepository.findByRoom(room)).thenReturn(List.of(game));
+        when(gamePlayerRepository.findByGameAndUser(game, alice)).thenReturn(Optional.of(alicePlayer));
+        when(gamePlayerRepository.findByGameOrderBySeatIndexAsc(game)).thenReturn(List.of(bobPlayer));
+        when(roomRepository.save(any(Room.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        gameService.leaveRoom(33L, 1L);
+
+        verify(gamePlayerRepository).deleteAllByGame(game);
+        verify(gameRepository).delete(game);
+        verify(roomRepository).delete(room);
+        Map<?, ?> lobbyPayload = template.lastPayloadFor("/topic/lobby");
+        assertEquals("LOBBY_EVENT", lobbyPayload.get("type"));
+        assertEquals("ROOM_REMOVED", lobbyPayload.get("event"));
+        assertEquals(33L, lobbyPayload.get("roomId"));
     }
 
     @Test

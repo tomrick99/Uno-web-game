@@ -49,7 +49,6 @@
                         <div class="room-meta">
                             <span>{{ room.playerCount || 0 }}/{{ room.maxPlayers || 2 }} {{ t("playersUnit") }}</span>
                             <span>{{ modeLabel(room.gameMode) }}</span>
-                            <span>{{ room.totalRounds || 8 }} {{ t("roundsUnit") }}</span>
                             <span>{{ room.roundTimeLimitMinutes || 10 }} {{ t("minutesUnit") }}</span>
                         </div>
                     </div>
@@ -74,28 +73,6 @@
                             :class="{ active: maxPlayers === option }"
                             @click="maxPlayers = option"
                         >{{ option }}</button>
-                    </div>
-
-                    <label>{{ t("rounds") }}</label>
-                    <div class="option-grid">
-                        <button
-                            v-for="option in roundOptions"
-                            :key="option"
-                            class="option-chip"
-                            :class="{ active: totalRounds === option }"
-                            @click="totalRounds = option"
-                        >{{ option }} {{ t("roundsUnit") }}</button>
-                    </div>
-
-                    <label>{{ t("roundTime") }}</label>
-                    <div class="option-grid">
-                        <button
-                            v-for="option in timeOptions"
-                            :key="option"
-                            class="option-chip"
-                            :class="{ active: roundTimeLimitMinutes === option }"
-                            @click="roundTimeLimitMinutes = option"
-                        >{{ option }} {{ t("minutesUnit") }}</button>
                     </div>
 
                     <label>{{ t("mode") }}</label>

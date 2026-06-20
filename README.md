@@ -25,15 +25,13 @@ For Railway or Render, use `backend/` as the deployable root directory.
 ## Features
 
 - User registration, login, logout, and session-based auth
-- Lobby with room list, custom room creation, joining, and return-to-lobby flow
+- Lobby with realtime room list, room creation, joining, and return-to-lobby flow
 - Custom room options:
   - `maxPlayers`: 2-8 players
-  - `totalRounds`: 8, 16, or 32 rounds
-  - `roundTimeLimitMinutes`: 5, 10, or 15 minutes
   - `gameMode`: Classic or No Mercy
 - Multiplayer auto-start only when the room reaches `maxPlayers`
 - Realtime game state sync with WebSocket/STOMP and polling fallback
-- Classic UNO gameplay with color/number/type matching, skip, reverse, draw cards, wild cards, penalty stacking, game over, and rematch
+- Classic UNO gameplay with color/number/type matching, skip, reverse, draw cards, wild cards, equal-or-higher penalty stacking, game over, and rematch
 - No Mercy mode with extra cards:
   - Colored `+4`
   - `DROP`
@@ -41,12 +39,14 @@ For Railway or Render, use `backend/` as the deployable root directory.
   - Black `+6`
   - Black `+10`
   - Black `+4 REV`
-- No Mercy draw stacking: the next penalty card must be equal to or higher than the previous penalty value
+- Draw stacking follows turn direction and only accepts a penalty card equal to or higher than the previous penalty value
+- Players without a valid stacking response immediately draw the accumulated penalty; players with one may accept or continue stacking
+- Returning to the lobby after a finished game deletes the completed room and removes its lobby card
 - Click-to-open rules panel and recent game log
 - Chinese/English language switch on lobby and game pages
 - Admin room panel:
   - view all rooms
-  - delete rooms
+  - delete one room, selected rooms, or all rooms
   - edit waiting-room configuration
 
 ## Local Development
@@ -94,7 +94,9 @@ java -jar target/uno-backend-1.0.0.jar
 
 The project uses Hibernate `ddl-auto=update`, so local schema changes are usually applied automatically.
 
-If an existing online database was created before custom rooms / No Mercy were added, verify that the `room` table has these columns:
+Legacy room configuration columns may remain in existing databases for compatibility. The current UI no longer exposes round-count configuration.
+
+If an existing online database was created before No Mercy was added, verify that the `room` table has these columns:
 
 ```sql
 ALTER TABLE room
@@ -176,7 +178,8 @@ Alternative option: Docker deploy using `backend/Dockerfile`.
 2. Log in as two users.
 3. Create a Classic room.
 4. Join until the room reaches `maxPlayers`.
-5. Play number cards, skip, reverse, `+2`, `+4`, wild color selection, return to lobby, and rematch.
+5. Verify `+2` accepts `+2` or `+4`, while `+4` rejects `+2`.
+6. Play number cards, skip, reverse, wild color selection, return to lobby, and rematch.
 
 ### No Mercy
 
@@ -195,7 +198,9 @@ Alternative option: Docker deploy using `backend/Dockerfile`.
 2. Open the admin panel from the lobby.
 3. Edit a waiting room.
 4. Confirm playing rooms cannot be edited.
-5. Delete a test room.
+5. Select several rooms and delete only the selected rooms.
+6. Confirm unselected rooms remain, then verify the “delete all” action.
+7. Finish a game, return to the lobby instead of rematching, and confirm the completed room disappears.
 
 ## Verification
 
@@ -225,13 +230,13 @@ node --check backend/src/main/resources/static/js/pages/admin.js
 - Two or more browsers stay synchronized
 - Classic mode can still complete a game
 - No Mercy mode displays and handles new cards
-- Admin can edit waiting rooms and delete rooms
+- Admin can delete individual, selected, or all rooms
+- Finished rooms are removed when a player returns to the lobby instead of continuing
 - No passwords are committed
 - `target/` is ignored
 
 ## Future Improvements
 
-- Full countdown behavior for `roundTimeLimitMinutes`
 - Better mobile layout polish for very large hands
 - Match history and player stats
 - Stronger admin controls such as kick player or manual start

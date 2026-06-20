@@ -28,6 +28,7 @@ body {
 .admin-actions {
     display: flex;
     gap: 12px;
+    flex-wrap: wrap;
 }
 
 .admin-main {
@@ -65,6 +66,13 @@ body {
 .card-head h2 {
     font-size: 20px;
     margin-bottom: 6px;
+}
+
+.room-select {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
 }
 
 .card-head p,

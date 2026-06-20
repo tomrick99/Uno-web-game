@@ -10,12 +10,12 @@ createApp({
         const showEdit = ref(false);
         const editingRoom = ref(null);
         const savingEdit = ref(false);
+        const selectedRoomIds = ref([]);
+        const deletingRooms = ref(false);
         const playerOptions = [2, 3, 4, 5, 6, 7, 8];
-        const roundOptions = [8, 16, 32];
         const timeOptions = [5, 10, 15];
         const editForm = reactive({
             maxPlayers: 2,
-            totalRounds: 8,
             roundTimeLimitMinutes: 10,
             gameMode: "CLASSIC"
         });
@@ -71,6 +71,8 @@ createApp({
                 const res = await axios.get(`${apiBase}/admin/rooms`);
                 if (res.data.code === 200) {
                     rooms.value = res.data.data || [];
+                    const roomIds = new Set(rooms.value.map((room) => String(room.roomId)));
+                    selectedRoomIds.value = selectedRoomIds.value.filter((roomId) => roomIds.has(String(roomId)));
                     errorMsg.value = "";
                 } else {
                     errorMsg.value = res.data.message || "加载房间失败";
@@ -91,7 +93,6 @@ createApp({
             }
             editingRoom.value = room;
             editForm.maxPlayers = Number(room.maxPlayers || 2);
-            editForm.totalRounds = Number(room.totalRounds || 8);
             editForm.roundTimeLimitMinutes = Number(room.roundTimeLimitMinutes || 10);
             editForm.gameMode = room.gameMode || "CLASSIC";
             showEdit.value = true;
@@ -110,7 +111,6 @@ createApp({
             try {
                 const res = await axios.put(`${apiBase}/admin/rooms/${editingRoom.value.roomId}`, {
                     maxPlayers: editForm.maxPlayers,
-                    totalRounds: editForm.totalRounds,
                     roundTimeLimitMinutes: editForm.roundTimeLimitMinutes,
                     gameMode: editForm.gameMode
                 });
@@ -146,6 +146,31 @@ createApp({
             }
         };
 
+        const deleteRoomBatch = async (targets, message) => {
+            if (!targets.length || deletingRooms.value || !window.confirm(message)) return;
+            clearMessages();
+            deletingRooms.value = true;
+            try {
+                for (const room of targets) {
+                    const res = await axios.delete(`${apiBase}/admin/rooms/${room.roomId}`);
+                    if (res.data.code !== 200) throw new Error(res.data.message || "删除房间失败");
+                }
+                selectedRoomIds.value = [];
+                flashSuccess(`已删除 ${targets.length} 个房间`);
+            } catch (error) {
+                errorMsg.value = error.response?.data?.message || error.message || "删除房间失败";
+            } finally {
+                deletingRooms.value = false;
+                await loadRooms();
+            }
+        };
+
+        const deleteSelectedRooms = () => {
+            const selected = new Set(selectedRoomIds.value.map(String));
+            return deleteRoomBatch(rooms.value.filter((room) => selected.has(String(room.roomId))), "确定删除选中的房间吗？");
+        };
+        const deleteAllRooms = () => deleteRoomBatch([...rooms.value], "确定删除全部房间吗？");
+
         const backToLobby = () => {
             window.location.href = "lobby.html";
         };
@@ -172,9 +197,10 @@ createApp({
             showEdit,
             editingRoom,
             savingEdit,
+            selectedRoomIds,
+            deletingRooms,
             editForm,
             playerOptions,
-            roundOptions,
             timeOptions,
             formatTime,
             statusLabel,
@@ -184,6 +210,8 @@ createApp({
             closeEditRoom,
             saveRoomEdit,
             deleteRoom,
+            deleteSelectedRooms,
+            deleteAllRooms,
             backToLobby
         };
     }
