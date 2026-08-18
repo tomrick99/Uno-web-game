@@ -1614,7 +1614,9 @@ createApp({
                 const response = await axios.post(`${apiBase}/game/${gameId.value}/play?${params.toString()}`);
                 if (response.data.code === 200) {
                     clearCardSelection();
-                    await refreshFromServer({ reason: "play-ack" });
+                    if (shouldRefreshAfterAck(response)) {
+                        await refreshFromServer({ reason: "play-ack" });
+                    }
                 } else {
                     showToastMessage(response.data.message || (language.value === "zh" ? "出牌失败" : "Failed to play card"));
                     await refreshFromServer();
@@ -1638,7 +1640,9 @@ createApp({
                 const response = await axios.post(`${apiBase}/game/${gameId.value}/draw`);
                 if (response.data.code === 200) {
                     clearCardSelection();
-                    await refreshFromServer({ reason: "draw-ack" });
+                    if (shouldRefreshAfterAck(response)) {
+                        await refreshFromServer({ reason: "draw-ack" });
+                    }
                 } else {
                     showToastMessage(response.data.message || (language.value === "zh" ? "抽牌失败" : "Failed to draw card"));
                     await refreshFromServer();
@@ -1664,7 +1668,9 @@ createApp({
                 const response = await axios.post(`${apiBase}/game/${gameId.value}/draw-penalty`);
                 if (response.data.code === 200) {
                     clearCardSelection();
-                    await refreshFromServer({ reason: "draw-penalty-ack" });
+                    if (shouldRefreshAfterAck(response)) {
+                        await refreshFromServer({ reason: "draw-penalty-ack" });
+                    }
                 } else {
                     showToastMessage(response.data.message || (language.value === "zh" ? "抽取罚牌失败" : "Failed to draw penalty"));
                     if (autoTriggered) lastAutoPenaltyKey.value = "";
