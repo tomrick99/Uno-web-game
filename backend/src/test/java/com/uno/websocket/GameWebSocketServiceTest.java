@@ -77,9 +77,14 @@ class GameWebSocketServiceTest {
                 Map.of("color", "RED", "type", "NUMBER", "value", 3),
                 Map.of("color", "RED", "type", "NUMBER", "value", 3),
                 0,
+                "NONE",
+                null,
+                42,
                 "PLAYING",
                 "PLAYING",
-                List.of(new PublicPlayerInfo(1L, "alice", 4, 0, false, false)),
+                List.of(new PublicPlayerInfo(1L, "alice", 4, 0, false, false, false)),
+                null,
+                List.of(),
                 "played",
                 false
         );
@@ -90,6 +95,9 @@ class GameWebSocketServiceTest {
         assertInstanceOf(PublicGamePatch.class, template.payload);
         PublicGamePatch sentPatch = (PublicGamePatch) template.payload;
         assertEquals(12345L, sentPatch.version());
+        assertEquals("NONE", sentPatch.pendingDrawType());
+        assertEquals(42, sentPatch.drawPileSize());
+        assertEquals(List.of(), sentPatch.rematchReadyPlayerIds());
         assertFalse(sentPatch.getClass().getRecordComponents()[0].getName().equals("handCards"));
         assertNull(findRecordComponent(sentPatch, "handCards"));
     }
@@ -119,7 +127,7 @@ class GameWebSocketServiceTest {
     }
 
     @Test
-    void privateHandPatchUsesUserQueueAndLegacyFallbackWhenEnabled() {
+    void privateHandPatchUsesOnlyAuthenticatedUserQueue() {
         RecordingTemplate template = new RecordingTemplate();
         GameWebSocketService service = new GameWebSocketService(template);
         PrivateHandPatch patch = new PrivateHandPatch(
@@ -136,15 +144,42 @@ class GameWebSocketServiceTest {
                 0
         );
 
-        service.sendPrivateHandPatch("alice", 8L, 20L, 99L, patch, true);
+        service.sendPrivateHandPatch("alice", 8L, 20L, 99L, patch);
 
         assertEquals("alice", template.user);
         assertEquals("/queue/room/8/hand", template.userDestination);
-        assertEquals("/topic/games/20/hands/99", template.destination);
-        assertInstanceOf(PrivateHandPatch.class, template.payload);
+        assertNull(template.destination);
+        assertNull(template.payload);
         assertInstanceOf(PrivateHandPatch.class, template.userPayload);
         assertTrue(((PrivateHandPatch) template.userPayload).handCards().size() == 1);
         assertEquals("8-20-99-12345-HAND_UPDATED", ((PrivateHandPatch) template.userPayload).patchId());
+    }
+
+    @Test
+    void missingPrincipalRequestsSafeSnapshotInsteadOfPublishingHand() {
+        RecordingTemplate template = new RecordingTemplate();
+        GameWebSocketService service = new GameWebSocketService(template);
+        PrivateHandPatch patch = new PrivateHandPatch(
+                "HAND_UPDATED",
+                8L,
+                20L,
+                12345L,
+                999L,
+                99L,
+                "8-20-99-12345-HAND_UPDATED",
+                List.of(Map.of("color", "RED", "type", "NUMBER", "value", 3)),
+                null,
+                false,
+                0
+        );
+
+        service.sendPrivateHandPatch(null, 8L, 20L, 99L, patch);
+
+        assertNull(template.user);
+        assertEquals("/topic/games/20", template.destination);
+        Map<?, ?> payload = (Map<?, ?>) template.payload;
+        assertEquals("RESYNC_REQUIRED", payload.get("type"));
+        assertFalse(payload.containsKey("handCards"));
     }
 
     private String findRecordComponent(Object record, String name) {

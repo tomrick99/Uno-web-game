@@ -103,8 +103,7 @@ public class GameWebSocketService {
                                      Long roomId,
                                      Long gameId,
                                      Long userId,
-                                     PrivateHandPatch patch,
-                                     boolean legacyFallback) {
+                                     PrivateHandPatch patch) {
         String userDestination = "/queue/room/" + roomId + "/hand";
         if (username != null && !username.isBlank()) {
             log.info("[SYNC] action=sendPrivateHandPatch channel=userQueue user={} destination={} version={} patchId={}",
@@ -114,19 +113,16 @@ public class GameWebSocketService {
                     patch.patchId());
             timedSendToUser(username, userDestination, patch, roomId, patch.type());
         } else {
-            log.warn("[SYNC] action=privateHandPatchMissingPrincipal roomId={} gameId={} userId={} fallbackTopicOnly=true",
+            log.error("[SYNC] action=privateHandPatchMissingPrincipal roomId={} gameId={} userId={} fallbackPollingRequired=true",
                     roomId, gameId, userId);
-        }
-
-        if (legacyFallback || username == null || username.isBlank()) {
-            String fallbackDestination = "/topic/games/" + gameId + "/hands/" + userId;
-            log.info("[SYNC] action=sendPrivateHandPatch channel=legacyFallback destination={} version={} patchId={}",
-                    fallbackDestination,
-                    patch.version(),
-                    patch.patchId());
-            timedSend(fallbackDestination, patch, roomId, patch.type());
-            log.info("[SYNC] action=privateHandPatchFallback roomId={} gameId={} destination={} userId={} version={}",
-                    roomId, gameId, fallbackDestination, userId, patch.version());
+            Map<String, Object> resyncPayload = new LinkedHashMap<>();
+            resyncPayload.put("type", "RESYNC_REQUIRED");
+            resyncPayload.put("event", "RESYNC_REQUIRED");
+            resyncPayload.put("roomId", roomId);
+            resyncPayload.put("gameId", gameId);
+            resyncPayload.put("version", patch.version());
+            resyncPayload.put("message", "Private state unavailable; refresh snapshot");
+            timedSend("/topic/games/" + gameId, resyncPayload, roomId, "RESYNC_REQUIRED");
         }
     }
 

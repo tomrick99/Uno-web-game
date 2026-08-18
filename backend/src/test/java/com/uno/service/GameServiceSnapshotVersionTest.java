@@ -463,7 +463,7 @@ class GameServiceSnapshotVersionTest {
         public void convertAndSend(String destination, Object payload) {
             sentDestinations.add(destination);
             sentPayloads.add(payload);
-            if (destination.startsWith("/topic/games/") && !destination.contains("/hands/")) {
+            if (destination.startsWith("/topic/games/")) {
                 this.lastPublicPayload = payload;
             }
         }

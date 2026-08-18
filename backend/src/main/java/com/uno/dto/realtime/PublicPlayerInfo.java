@@ -6,6 +6,7 @@ public record PublicPlayerInfo(
         int handCount,
         Integer seatIndex,
         boolean saidUno,
-        boolean currentPlayer
+        boolean currentPlayer,
+        boolean rematchReady
 ) {
 }

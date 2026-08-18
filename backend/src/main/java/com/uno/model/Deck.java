@@ -41,10 +41,8 @@ public class Deck {
             }
         }
 
-        if (this.drawPile.isEmpty()) {
-            initializeDeck(gameMode == null ? GameMode.CLASSIC : gameMode);
-            shuffle();
-        }
+        // A restored game may legitimately have an empty draw pile. Keep the
+        // persisted state intact so drawCard() can recycle the discard pile.
     }
 
     private void initializeDeck(GameMode gameMode) {

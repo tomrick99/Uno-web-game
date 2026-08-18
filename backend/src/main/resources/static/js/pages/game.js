@@ -4,6 +4,7 @@ const realtimeUtils = window.UnoRealtimeUtils || {};
 const FALLBACK_THRESHOLD_MS = 5000;
 const RECONNECT_DELAY_MS = 3000;
 const FALLBACK_POLL_INTERVAL_MS = 5000;
+const WS_CONNECT_TIMEOUT_MS = 5000;
 const websocketEndpoint = "/api/ws";
 
 createApp({
@@ -63,7 +64,6 @@ createApp({
         const roomSubscription = ref(null);
         const gameSubscription = ref(null);
         const handSubscription = ref(null);
-        const legacyHandSubscription = ref(null);
         const subscribedGameId = ref(null);
 
         let reconnectTimer = null;
@@ -748,7 +748,7 @@ createApp({
             }
             pendingRealtimeBatch = null;
             lastGameStartConsistencyKey = null;
-            for (const subscription of [roomSubscription, gameSubscription, handSubscription, legacyHandSubscription]) {
+            for (const subscription of [roomSubscription, gameSubscription, handSubscription]) {
                 if (subscription.value) {
                     subscription.value.unsubscribe();
                     subscription.value = null;
@@ -803,7 +803,8 @@ createApp({
             handCount: player.handCount ?? 0,
             seatIndex: player.seatIndex,
             saidUno: Boolean(player.saidUno),
-            currentPlayer: Boolean(player.currentPlayer)
+            currentPlayer: Boolean(player.currentPlayer),
+            rematchReady: Boolean(player.rematchReady)
         }));
 
         const getChannelLabel = (payload, fallback = "unknown") => payload?.__channel || fallback;
@@ -850,6 +851,7 @@ createApp({
                 payload.currentPlayerId !== undefined
                 || payload.currentColor !== undefined
                 || payload.pendingPenalty !== undefined
+                || payload.pendingDrawType !== undefined
                 || payload.gameStatus !== undefined
                 || Array.isArray(payload.players)
             )) {
@@ -870,6 +872,11 @@ createApp({
                 copyField("currentColor");
                 copyField("direction");
                 copyField("pendingDrawCount", "pendingPenalty");
+                copyField("pendingDrawType");
+                copyField("lastPenaltyPlayerId");
+                copyField("drawPileSize");
+                copyField("winnerId");
+                copyField("rematchReadyPlayerIds");
                 if (hasOwnField(payload, "direction")) {
                     gameState.clockwise = payload.direction !== -1;
                 }
@@ -1278,6 +1285,18 @@ createApp({
             updateConnectionMode();
         };
 
+        const enterFallbackNow = (reason = "ws-unavailable") => {
+            if (wsConnected.value) return;
+            disconnectedAt = disconnectedAt || Date.now();
+            console.warn("[UNO-GAME] fallback polling requested", reason);
+            if (fallbackActivationTimer) {
+                clearTimeout(fallbackActivationTimer);
+                fallbackActivationTimer = null;
+            }
+            startFallbackPolling();
+            refreshFromServer({ reason });
+        };
+
         const scheduleFallbackActivation = () => {
             if (fallbackActivationTimer || wsConnected.value) return;
             fallbackActivationTimer = setTimeout(() => {
@@ -1310,7 +1329,7 @@ createApp({
         };
 
         const resetSubscriptions = () => {
-            for (const subscription of [roomSubscription, gameSubscription, handSubscription, legacyHandSubscription]) {
+            for (const subscription of [roomSubscription, gameSubscription, handSubscription]) {
                 if (subscription.value) {
                     try {
                         subscription.value.unsubscribe();
@@ -1342,8 +1361,7 @@ createApp({
             if (!nextGameId || !stompClient.value || !wsConnected.value) return;
             if (String(subscribedGameId.value) === String(nextGameId)
                 && gameSubscription.value
-                && handSubscription.value
-                && legacyHandSubscription.value) {
+                && handSubscription.value) {
                 return;
             }
             if (subscribedGameId.value && String(subscribedGameId.value) !== String(nextGameId)) {
@@ -1351,10 +1369,8 @@ createApp({
             }
             if (gameSubscription.value) gameSubscription.value.unsubscribe();
             if (handSubscription.value) handSubscription.value.unsubscribe();
-            if (legacyHandSubscription.value) legacyHandSubscription.value.unsubscribe();
             gameSubscription.value = null;
             handSubscription.value = null;
-            legacyHandSubscription.value = null;
             subscribedGameId.value = String(nextGameId);
             console.info("[UNO-GAME] subscribed game topic", nextGameId);
             console.info(`[UNO-SYNC] subscribed destination=/topic/games/${nextGameId}`);
@@ -1378,15 +1394,6 @@ createApp({
                 applyRealtimeState(payload, "ws-hand-userQueue");
             });
 
-            if (userId.value) {
-                console.info(`[UNO-SYNC] subscribed destination=/topic/games/${nextGameId}/hands/${userId.value}`);
-                legacyHandSubscription.value = stompClient.value.subscribe(`/topic/games/${nextGameId}/hands/${userId.value}`, (message) => {
-                    const payload = JSON.parse(message.body || "{}");
-                    payload.__channel = "legacyFallback";
-                    console.info(`[UNO-SYNC] private hand received channel=legacyFallback version=${extractStateVersion(payload) ?? "none"} patchId=${payload.patchId || "none"}`);
-                    applyRealtimeState(payload, "ws-hand-legacyFallback");
-                });
-            }
         }
 
         const handleSocketDisconnected = (client = null) => {
@@ -1401,7 +1408,7 @@ createApp({
             console.warn("[UNO-GAME] ws disconnected, reconnecting");
             resetSubscriptions();
             updateConnectionMode();
-            scheduleFallbackActivation();
+            enterFallbackNow("ws-disconnected");
             if (reconnectTimer) clearTimeout(reconnectTimer);
             reconnectTimer = setTimeout(() => {
                 reconnectTimer = null;
@@ -1435,8 +1442,7 @@ createApp({
                     stompJsLoaded
                 });
                 disconnectedAt = disconnectedAt || Date.now();
-                updateConnectionMode();
-                scheduleFallbackActivation();
+                enterFallbackNow("ws-script-missing");
                 scheduleReconnectAfterFailedConnect();
                 return false;
             }
@@ -1486,6 +1492,26 @@ createApp({
                     handleSocketDisconnected(client);
                     resolveOnce(false);
                 };
+                const handleConnectTimeout = () => {
+                    if (settled || stompClient.value !== client || wsConnected.value) return;
+                    console.error("[UNO-GAME] ws connect failed", {
+                        endpoint: websocketEndpoint,
+                        reason: "connect-timeout"
+                    });
+                    wsConnectInFlight = false;
+                    if (stompClient.value === client) {
+                        stompClient.value = null;
+                    }
+                    try {
+                        if (typeof client?.deactivate === "function") client.deactivate();
+                        else if (typeof client?.disconnect === "function") client.disconnect(() => {});
+                    } catch (error) {
+                        console.error(error);
+                    }
+                    enterFallbackNow("ws-connect-timeout");
+                    scheduleReconnectAfterFailedConnect();
+                    resolveOnce(false);
+                };
                 const socketFactory = () => {
                     const socket = new SockJS(websocketEndpoint);
                     socket.onclose = (event) => {
@@ -1515,22 +1541,7 @@ createApp({
                     }
                 });
                 stompClient.value = client;
-                connectTimeout = setTimeout(() => {
-                    if (wsConnected.value || stompClient.value !== client) return;
-                    console.warn("[UNO-GAME] websocket connect timeout");
-                    stompClient.value = null;
-                    wsConnectInFlight = false;
-                    disconnectedAt = disconnectedAt || Date.now();
-                    try {
-                        client.deactivate();
-                    } catch (error) {
-                        console.error(error);
-                    }
-                    updateConnectionMode();
-                    startFallbackPolling();
-                    scheduleReconnectAfterFailedConnect();
-                    resolveOnce(false);
-                }, FALLBACK_THRESHOLD_MS);
+                connectTimeout = setTimeout(handleConnectTimeout, WS_CONNECT_TIMEOUT_MS);
                 try {
                     client.activate();
                 } catch (error) {
@@ -1731,10 +1742,14 @@ createApp({
             document.addEventListener("click", delegatedButtonHandler);
 
             shouldReconnect = true;
-            const connected = await connectWebSocket({ resyncOnConnect: false });
-            if (!connected) {
-                updateConnectionMode();
-            }
+            connectWebSocket({ resyncOnConnect: false }).then((connected) => {
+                if (!connected && !wsConnected.value) {
+                    updateConnectionMode();
+                }
+            }).catch((error) => {
+                console.error("[UNO-GAME] ws connect failed", error);
+                enterFallbackNow("ws-connect-exception");
+            });
             await joinAndLoad();
         });
 

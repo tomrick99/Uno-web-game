@@ -346,7 +346,7 @@ public class GameService {
             wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Game started");
             List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
             wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "GAME_STARTED", userId, user.getUsername(), "Game started"));
-            sendPrivateHandPatches(game, players, "HAND_UPDATED", true);
+            sendPrivateHandPatches(game, players, "HAND_UPDATED");
         } else if (game.getStatus() == GameStatus.PLAYING || game.getStatus() == GameStatus.FINISHED) {
             Map<String, Object> roomState = getRoomStateWithVersion(room, game);
             wsService.broadcastRoomState(roomState, "PLAYER_SYNC", null);
@@ -414,7 +414,16 @@ public class GameService {
             moveToNextPlayer(game);
         }
         List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
-        GamePlayer autoPenaltyPlayer = resolveUnstackablePenalty(game, players);
+        List<Card> remainingHand = player.getHandCards();
+        boolean gameFinished = remainingHand.isEmpty();
+        GamePlayer autoPenaltyPlayer = null;
+        if (gameFinished) {
+            game.setStatus(GameStatus.FINISHED);
+            game.setCurrentTurn(null);
+            clearPendingDraw(game);
+        } else {
+            autoPenaltyPlayer = resolveUnstackablePenalty(game, players);
+        }
         gameRepository.save(game);
         long version = bumpStateVersion(game.getRoom().getId());
         log.info("[SYNC] action=playCardApplied roomId={} gameId={} userId={} playedCard={} oldTurn={} newTurn={} currentPlayerIndex={} direction={} pendingPenalty={} gameStatus={} version={}",
@@ -431,10 +440,7 @@ public class GameService {
                 version);
         logUnoPlay(userId, card, topCard, effectiveColor, game.getPendingDrawCount(), true, true, "accepted", game.getCurrentTurn());
 
-        List<Card> remainingHand = player.getHandCards();
-        if (remainingHand.isEmpty()) {
-            game.setStatus(GameStatus.FINISHED);
-            gameRepository.save(game);
+        if (gameFinished) {
             roomService.closeRoom(game.getRoom());
             int playerCount = players.size();
             log.info("[UNO] game finished gameId={} roomId={} winner={}", game.getId(), game.getRoom().getId(), userId);
@@ -446,14 +452,14 @@ public class GameService {
             wsService.broadcastRoomState(roomState, "GAME_FINISHED", user.getUsername() + " 赢得了本局");
             wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Game finished");
             wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "GAME_FINISHED", userId, user.getUsername(), user.getUsername() + " wins!"));
-            sendPrivateHandPatch(game, player, "HAND_UPDATED", true);
+            sendPrivateHandPatch(game, player, "HAND_UPDATED");
         } else {
             String display = card.type() == CardType.NUMBER ? String.valueOf(card.value()) : card.type().name();
             wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "CARD_PLAYED", userId, user.getUsername(), user.getUsername() + " played " + display));
-            sendPrivateHandPatch(game, player, "HAND_UPDATED", true);
+            sendPrivateHandPatch(game, player, "HAND_UPDATED");
         }
         if (autoPenaltyPlayer != null && autoPenaltyPlayer != player) {
-            sendPrivateHandPatch(game, autoPenaltyPlayer, "HAND_UPDATED", true);
+            sendPrivateHandPatch(game, autoPenaltyPlayer, "HAND_UPDATED");
         }
 
         return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "CARD_PLAYED");
@@ -508,7 +514,7 @@ public class GameService {
 
         List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
         wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "CARD_DRAWN_PUBLIC", userId, user.getUsername(), user.getUsername() + " drew a card"));
-        sendPrivateHandPatch(game, player, "HAND_UPDATED", true);
+        sendPrivateHandPatch(game, player, "HAND_UPDATED");
         return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "CARD_DRAWN_PUBLIC");
     }
 
@@ -551,7 +557,7 @@ public class GameService {
                 version);
         List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
         wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "PENALTY_UPDATED", userId, user.getUsername(), user.getUsername() + " drew " + drawCount + " penalty cards"));
-        sendPrivateHandPatch(game, player, "HAND_UPDATED", true);
+        sendPrivateHandPatch(game, player, "HAND_UPDATED");
         return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "PENALTY_UPDATED");
     }
 
@@ -618,7 +624,7 @@ public class GameService {
         wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Rematch started");
         List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
         wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "GAME_RESTARTED", userId, user.getUsername(), "Game restarted"));
-        sendPrivateHandPatches(game, players, "HAND_UPDATED", true);
+        sendPrivateHandPatches(game, players, "HAND_UPDATED");
 
         return operationAck(room.getId(), game.getId(), getCurrentStateVersion(room.getId(), game), "GAME_RESTARTED");
     }
@@ -1084,7 +1090,11 @@ public class GameService {
 
         if (!discarded.isEmpty()) {
             List<Card> discardPile = fromJson(game.getDiscardPileJson());
+            Card dropCard = discardPile.isEmpty() ? null : discardPile.remove(discardPile.size() - 1);
             discardPile.addAll(discarded);
+            if (dropCard != null) {
+                discardPile.add(dropCard);
+            }
             game.setDiscardPileJson(toJson(discardPile));
         }
 
@@ -1293,21 +1303,7 @@ public class GameService {
     private Deck getDeck(Game game) {
         List<Card> drawPile = fromJson(game.getDrawPileJson());
         List<Card> discardPile = fromJson(game.getDiscardPileJson());
-        if (drawPile.isEmpty()) {
-            Deck newDeck = new Deck(resolveGameMode(game));
-            game.setDrawPileJson(toJson(newDeck.getDrawPile()));
-            game.setDiscardPileJson(toJson(newDeck.getDiscardPile()));
-            gameRepository.save(game);
-            return newDeck;
-        }
-
-        Deck deck = new Deck(drawPile, discardPile, resolveGameMode(game));
-        if (deck.getDrawPileSize() != drawPile.size()) {
-            game.setDrawPileJson(toJson(deck.getDrawPile()));
-            game.setDiscardPileJson(toJson(deck.getDiscardPile()));
-            gameRepository.save(game);
-        }
-        return deck;
+        return new Deck(drawPile, discardPile, resolveGameMode(game));
     }
 
     private void saveDeckState(Game game, Deck deck) {
@@ -1389,11 +1385,19 @@ public class GameService {
             Long currentPlayerId = game.getCurrentTurn();
             Integer currentPlayerIndex = resolveCurrentPlayerIndex(game);
             String currentPlayerName = null;
+            Long winnerId = null;
+            List<Long> rematchReadyPlayerIds = new ArrayList<>();
             List<PublicPlayerInfo> publicPlayers = new ArrayList<>();
             for (GamePlayer player : players) {
                 boolean currentPlayer = player.getUser().getId().equals(currentPlayerId);
                 if (currentPlayer) {
                     currentPlayerName = player.getUser().getUsername();
+                }
+                if (game.getStatus() == GameStatus.FINISHED && player.getHandCards().isEmpty()) {
+                    winnerId = player.getUser().getId();
+                }
+                if (player.isRematchReady()) {
+                    rematchReadyPlayerIds.add(player.getUser().getId());
                 }
                 publicPlayers.add(new PublicPlayerInfo(
                         player.getUser().getId(),
@@ -1401,7 +1405,8 @@ public class GameService {
                         player.getHandCards() != null ? player.getHandCards().size() : 0,
                         player.getSeatIndex(),
                         player.isSaidUno(),
-                        currentPlayer
+                        currentPlayer,
+                        player.isRematchReady()
                 ));
             }
             return new PublicGamePatch(
@@ -1420,9 +1425,14 @@ public class GameService {
                     topCard != null ? cardToMap(topCard) : null,
                     topCard != null ? cardToMap(topCard) : null,
                     game.getPendingDrawCount(),
+                    game.getPendingDrawType() != null ? game.getPendingDrawType().name() : PendingDrawType.NONE.name(),
+                    game.getLastPenaltyPlayerId(),
+                    fromJson(game.getDrawPileJson()).size(),
                     game.getStatus().name(),
                     game.getRoom().getStatus().name(),
                     publicPlayers,
+                    winnerId,
+                    rematchReadyPlayerIds,
                     message,
                     false
             );
@@ -1436,7 +1446,7 @@ public class GameService {
         }
     }
 
-    private void sendPrivateHandPatch(Game game, GamePlayer player, String type, boolean legacyFallback) {
+    private void sendPrivateHandPatch(Game game, GamePlayer player, String type) {
         if (game == null || player == null) {
             return;
         }
@@ -1448,8 +1458,7 @@ public class GameService {
                     game.getRoom().getId(),
                     game.getId(),
                     player.getUser().getId(),
-                    patch,
-                    legacyFallback
+                    patch
             );
         } finally {
             long costMs = (System.nanoTime() - startedAt) / 1_000_000;
@@ -1461,9 +1470,9 @@ public class GameService {
         }
     }
 
-    private void sendPrivateHandPatches(Game game, List<GamePlayer> players, String type, boolean legacyFallback) {
+    private void sendPrivateHandPatches(Game game, List<GamePlayer> players, String type) {
         for (GamePlayer player : players) {
-            sendPrivateHandPatch(game, player, type, legacyFallback);
+            sendPrivateHandPatch(game, player, type);
         }
     }
 

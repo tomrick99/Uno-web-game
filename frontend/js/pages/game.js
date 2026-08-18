@@ -64,7 +64,6 @@ createApp({
         const roomSubscription = ref(null);
         const gameSubscription = ref(null);
         const handSubscription = ref(null);
-        const legacyHandSubscription = ref(null);
         const subscribedGameId = ref(null);
 
         let reconnectTimer = null;
@@ -749,7 +748,7 @@ createApp({
             }
             pendingRealtimeBatch = null;
             lastGameStartConsistencyKey = null;
-            for (const subscription of [roomSubscription, gameSubscription, handSubscription, legacyHandSubscription]) {
+            for (const subscription of [roomSubscription, gameSubscription, handSubscription]) {
                 if (subscription.value) {
                     subscription.value.unsubscribe();
                     subscription.value = null;
@@ -804,7 +803,8 @@ createApp({
             handCount: player.handCount ?? 0,
             seatIndex: player.seatIndex,
             saidUno: Boolean(player.saidUno),
-            currentPlayer: Boolean(player.currentPlayer)
+            currentPlayer: Boolean(player.currentPlayer),
+            rematchReady: Boolean(player.rematchReady)
         }));
 
         const getChannelLabel = (payload, fallback = "unknown") => payload?.__channel || fallback;
@@ -851,6 +851,7 @@ createApp({
                 payload.currentPlayerId !== undefined
                 || payload.currentColor !== undefined
                 || payload.pendingPenalty !== undefined
+                || payload.pendingDrawType !== undefined
                 || payload.gameStatus !== undefined
                 || Array.isArray(payload.players)
             )) {
@@ -871,6 +872,11 @@ createApp({
                 copyField("currentColor");
                 copyField("direction");
                 copyField("pendingDrawCount", "pendingPenalty");
+                copyField("pendingDrawType");
+                copyField("lastPenaltyPlayerId");
+                copyField("drawPileSize");
+                copyField("winnerId");
+                copyField("rematchReadyPlayerIds");
                 if (hasOwnField(payload, "direction")) {
                     gameState.clockwise = payload.direction !== -1;
                 }
@@ -1182,7 +1188,8 @@ createApp({
         };
 
         const shouldRefreshAfterAck = (response) => {
-            return true;
+            if (!wsConnected.value) return true;
+            return response?.data?.data?.resync === true;
         };
 
         const returnToLobby = async ({ force = false, notifyServer = true, notice = "", skipConfirm = false } = {}) => {
@@ -1322,7 +1329,7 @@ createApp({
         };
 
         const resetSubscriptions = () => {
-            for (const subscription of [roomSubscription, gameSubscription, handSubscription, legacyHandSubscription]) {
+            for (const subscription of [roomSubscription, gameSubscription, handSubscription]) {
                 if (subscription.value) {
                     try {
                         subscription.value.unsubscribe();
@@ -1354,8 +1361,7 @@ createApp({
             if (!nextGameId || !stompClient.value || !wsConnected.value) return;
             if (String(subscribedGameId.value) === String(nextGameId)
                 && gameSubscription.value
-                && handSubscription.value
-                && legacyHandSubscription.value) {
+                && handSubscription.value) {
                 return;
             }
             if (subscribedGameId.value && String(subscribedGameId.value) !== String(nextGameId)) {
@@ -1363,10 +1369,8 @@ createApp({
             }
             if (gameSubscription.value) gameSubscription.value.unsubscribe();
             if (handSubscription.value) handSubscription.value.unsubscribe();
-            if (legacyHandSubscription.value) legacyHandSubscription.value.unsubscribe();
             gameSubscription.value = null;
             handSubscription.value = null;
-            legacyHandSubscription.value = null;
             subscribedGameId.value = String(nextGameId);
             console.info("[UNO-GAME] subscribed game topic", nextGameId);
             console.info(`[UNO-SYNC] subscribed destination=/topic/games/${nextGameId}`);
@@ -1390,15 +1394,6 @@ createApp({
                 applyRealtimeState(payload, "ws-hand-userQueue");
             });
 
-            if (userId.value) {
-                console.info(`[UNO-SYNC] subscribed destination=/topic/games/${nextGameId}/hands/${userId.value}`);
-                legacyHandSubscription.value = stompClient.value.subscribe(`/topic/games/${nextGameId}/hands/${userId.value}`, (message) => {
-                    const payload = JSON.parse(message.body || "{}");
-                    payload.__channel = "legacyFallback";
-                    console.info(`[UNO-SYNC] private hand received channel=legacyFallback version=${extractStateVersion(payload) ?? "none"} patchId=${payload.patchId || "none"}`);
-                    applyRealtimeState(payload, "ws-hand-legacyFallback");
-                });
-            }
         }
 
         const handleSocketDisconnected = (client = null) => {

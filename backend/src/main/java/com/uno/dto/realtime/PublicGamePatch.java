@@ -19,9 +19,14 @@ public record PublicGamePatch(
         Map<String, Object> topCard,
         Map<String, Object> discardTopCard,
         Integer pendingPenalty,
+        String pendingDrawType,
+        Long lastPenaltyPlayerId,
+        Integer drawPileSize,
         String gameStatus,
         String roomStatus,
         List<PublicPlayerInfo> players,
+        Long winnerId,
+        List<Long> rematchReadyPlayerIds,
         String message,
         Boolean resyncRequired
 ) {
