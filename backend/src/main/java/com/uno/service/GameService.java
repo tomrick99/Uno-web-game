@@ -24,6 +24,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -44,6 +46,12 @@ public class GameService {
     private static final Logger log = LoggerFactory.getLogger(GameService.class);
 
     private record PlayValidation(boolean playable, String reason) {}
+
+    private record PrivateHandPatchDelivery(String username,
+                                            Long roomId,
+                                            Long gameId,
+                                            Long userId,
+                                            PrivateHandPatch patch) {}
 
     private static final com.fasterxml.jackson.databind.ObjectMapper OBJECT_MAPPER =
             new com.fasterxml.jackson.databind.ObjectMapper()
@@ -440,6 +448,9 @@ public class GameService {
                 version);
         logUnoPlay(userId, card, topCard, effectiveColor, game.getPendingDrawCount(), true, true, "accepted", game.getCurrentTurn());
 
+        Map<String, Object> finishedRoomState = null;
+        PublicGamePatch publicPatch;
+        List<PrivateHandPatchDelivery> privateHandPatches = new ArrayList<>();
         if (gameFinished) {
             roomService.closeRoom(game.getRoom());
             int playerCount = players.size();
@@ -448,19 +459,27 @@ public class GameService {
             log.info("[UNO] broadcasting room update to /topic/rooms/{}", game.getRoom().getId());
             log.info("[UNO] broadcast game finished gameId={} roomId={} players={}", game.getId(), game.getRoom().getId(), playerCount);
 
-            Map<String, Object> roomState = getRoomStateWithVersion(game.getRoom(), game);
-            wsService.broadcastRoomState(roomState, "GAME_FINISHED", user.getUsername() + " 赢得了本局");
-            wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Game finished");
-            wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "GAME_FINISHED", userId, user.getUsername(), user.getUsername() + " wins!"));
-            sendPrivateHandPatch(game, player, "HAND_UPDATED");
+            finishedRoomState = getRoomStateWithVersion(game.getRoom(), game);
+            publicPatch = buildPublicGamePatch(game, players, "GAME_FINISHED", userId, user.getUsername(), user.getUsername() + " wins!");
         } else {
             String display = card.type() == CardType.NUMBER ? String.valueOf(card.value()) : card.type().name();
-            wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "CARD_PLAYED", userId, user.getUsername(), user.getUsername() + " played " + display));
-            sendPrivateHandPatch(game, player, "HAND_UPDATED");
+            publicPatch = buildPublicGamePatch(game, players, "CARD_PLAYED", userId, user.getUsername(), user.getUsername() + " played " + display);
         }
+        privateHandPatches.add(buildPrivateHandPatchDelivery(game, player, "HAND_UPDATED"));
         if (autoPenaltyPlayer != null && autoPenaltyPlayer != player) {
-            sendPrivateHandPatch(game, autoPenaltyPlayer, "HAND_UPDATED");
+            privateHandPatches.add(buildPrivateHandPatchDelivery(game, autoPenaltyPlayer, "HAND_UPDATED"));
         }
+
+        Map<String, Object> roomState = finishedRoomState;
+        List<PrivateHandPatchDelivery> deliveries = List.copyOf(privateHandPatches);
+        publishAfterCommit("playCard", () -> {
+            if (roomState != null) {
+                wsService.broadcastRoomState(roomState, "GAME_FINISHED", user.getUsername() + " 赢得了本局");
+                wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Game finished");
+            }
+            wsService.broadcastPublicGamePatch(publicPatch);
+            deliveries.forEach(this::sendPrivateHandPatch);
+        });
 
         return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "CARD_PLAYED");
     }
@@ -513,8 +532,12 @@ public class GameService {
                 version);
 
         List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
-        wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "CARD_DRAWN_PUBLIC", userId, user.getUsername(), user.getUsername() + " drew a card"));
-        sendPrivateHandPatch(game, player, "HAND_UPDATED");
+        PublicGamePatch publicPatch = buildPublicGamePatch(game, players, "CARD_DRAWN_PUBLIC", userId, user.getUsername(), user.getUsername() + " drew a card");
+        PrivateHandPatchDelivery privateHandPatch = buildPrivateHandPatchDelivery(game, player, "HAND_UPDATED");
+        publishAfterCommit("drawCard", () -> {
+            wsService.broadcastPublicGamePatch(publicPatch);
+            sendPrivateHandPatch(privateHandPatch);
+        });
         return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "CARD_DRAWN_PUBLIC");
     }
 
@@ -556,8 +579,12 @@ public class GameService {
                 game.getStatus(),
                 version);
         List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
-        wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "PENALTY_UPDATED", userId, user.getUsername(), user.getUsername() + " drew " + drawCount + " penalty cards"));
-        sendPrivateHandPatch(game, player, "HAND_UPDATED");
+        PublicGamePatch publicPatch = buildPublicGamePatch(game, players, "PENALTY_UPDATED", userId, user.getUsername(), user.getUsername() + " drew " + drawCount + " penalty cards");
+        PrivateHandPatchDelivery privateHandPatch = buildPrivateHandPatchDelivery(game, player, "HAND_UPDATED");
+        publishAfterCommit("drawPenalty", () -> {
+            wsService.broadcastPublicGamePatch(publicPatch);
+            sendPrivateHandPatch(privateHandPatch);
+        });
         return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "PENALTY_UPDATED");
     }
 
@@ -1450,22 +1477,35 @@ public class GameService {
         if (game == null || player == null) {
             return;
         }
+        sendPrivateHandPatch(buildPrivateHandPatchDelivery(game, player, type));
+    }
+
+    private PrivateHandPatchDelivery buildPrivateHandPatchDelivery(Game game, GamePlayer player, String type) {
+        return new PrivateHandPatchDelivery(
+                player.getUser().getUsername(),
+                game.getRoom().getId(),
+                game.getId(),
+                player.getUser().getId(),
+                buildPrivateHandPatch(game, player, type)
+        );
+    }
+
+    private void sendPrivateHandPatch(PrivateHandPatchDelivery delivery) {
         long startedAt = System.nanoTime();
         try {
-            PrivateHandPatch patch = buildPrivateHandPatch(game, player, type);
             wsService.sendPrivateHandPatch(
-                    player.getUser().getUsername(),
-                    game.getRoom().getId(),
-                    game.getId(),
-                    player.getUser().getId(),
-                    patch
+                    delivery.username(),
+                    delivery.roomId(),
+                    delivery.gameId(),
+                    delivery.userId(),
+                    delivery.patch()
             );
         } finally {
             long costMs = (System.nanoTime() - startedAt) / 1_000_000;
             log.info("[PERF] action=sendPrivateHandPatch roomId={} gameId={} userId={} costMs={}",
-                    game.getRoom().getId(),
-                    game.getId(),
-                    player.getUser().getId(),
+                    delivery.roomId(),
+                    delivery.gameId(),
+                    delivery.userId(),
                     costMs);
         }
     }
@@ -1514,6 +1554,25 @@ public class GameService {
             mapped.add(cardToMap(card));
         }
         return mapped;
+    }
+
+    private void publishAfterCommit(String action, Runnable publication) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()
+                || !TransactionSynchronizationManager.isSynchronizationActive()) {
+            publication.run();
+            return;
+        }
+
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                try {
+                    publication.run();
+                } catch (RuntimeException ex) {
+                    log.error("[SYNC] action={} phase=afterCommit websocketPublishFailed=true", action, ex);
+                }
+            }
+        });
     }
 
     private Map<String, Object> operationAck(Long roomId, Long gameId, long version, String type) {
