@@ -757,7 +757,10 @@ public class GameService {
     }
 
     private void startGame(Game game) {
-        Deck deck = new Deck(resolveGameMode(game));
+        startGame(game, new Deck(resolveGameMode(game)));
+    }
+
+    void startGame(Game game, Deck deck) {
         game.setStatus(GameStatus.PLAYING);
         game.setClockwise(true);
         clearPendingDraw(game);
@@ -787,15 +790,31 @@ public class GameService {
             gamePlayerRepository.save(player);
         }
 
-        Card firstDiscard = deck.drawCard();
-        if (firstDiscard == null || firstDiscard.color() == null || firstDiscard.color() == CardColor.WILD) {
-            firstDiscard = new Card(CardColor.RED, CardType.NUMBER, 0);
-        }
+        Card firstDiscard = drawInitialNumberCard(deck);
         deck.discard(firstDiscard);
 
         saveDeckState(game, deck);
         game.setCurrentColor(firstDiscard.color());
         game.setCurrentTurn(players.get(0).getUser().getId());
+    }
+
+    Card drawInitialNumberCard(Deck deck) {
+        List<Card> rejectedCards = new ArrayList<>();
+        Card candidate;
+        while ((candidate = deck.drawCard()) != null) {
+            if (candidate.color() != null
+                    && candidate.color() != CardColor.WILD
+                    && candidate.type() == CardType.NUMBER) {
+                deck.getDrawPile().addAll(rejectedCards);
+                deck.shuffle();
+                return candidate;
+            }
+            rejectedCards.add(candidate);
+        }
+
+        deck.getDrawPile().addAll(rejectedCards);
+        deck.shuffle();
+        throw new IllegalStateException("Deck does not contain a colored number card for the initial discard");
     }
 
     private PlayValidation validatePlay(Game game, Card card, Card topCard, CardColor currentColor) {
