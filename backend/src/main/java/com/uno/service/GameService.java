@@ -613,7 +613,7 @@ public class GameService {
 
         List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
         wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "REMATCH_READY", userId, user.getUsername(),
-                user.getUsername() + " is ready for a rematch. Waiting for the other player."));
+                user.getUsername() + " is ready for a rematch. Waiting for the remaining players."));
         return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "REMATCH_READY");
     }
 
@@ -633,7 +633,7 @@ public class GameService {
         }
 
         if (!rematchApproved && !allPlayersReadyForRematch(game)) {
-            throw new IllegalArgumentException("Both players must agree before restarting");
+            throw new IllegalArgumentException("All players must be ready before restarting");
         }
 
         Room room = game.getRoom();

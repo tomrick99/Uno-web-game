@@ -138,10 +138,10 @@ createApp({
                 pendingEqualHigher: "待罚 {count} 张；只能叠加不小于上一张的罚牌。",
                 pendingPlus4: "待罚 {count} 张；只能叠加 +4。",
                 pendingPlus2: "待罚 {count} 张；只能叠加 +2。",
-                rematchReadyBoth: "双方都已准备，正在重开...",
-                rematchReadyYou: "你已准备，等待对方。",
-                rematchReadyOther: "对方已准备。",
-                rematchNeedBoth: "双方都同意后才会开始下一局。",
+                rematchReadyCount: "已准备：{ready} / {total}",
+                rematchReadyAll: "所有玩家都已准备，正在重开...",
+                rematchReadyYou: "你已准备，正在等待其他玩家...",
+                rematchNeedAll: "所有玩家都准备后才能重新开始。",
                 ready: "已准备",
                 submitting: "提交中...",
                 rematch: "再来一局",
@@ -216,10 +216,10 @@ createApp({
                 pendingEqualHigher: "Pending draw: {count}. Stack a draw card equal to or higher than the last penalty.",
                 pendingPlus4: "Pending draw: {count}. Stack +4 only.",
                 pendingPlus2: "Pending draw: {count}. Stack +2 only.",
-                rematchReadyBoth: "Both players are ready. Restarting...",
-                rematchReadyYou: "You are ready. Waiting for the other player.",
-                rematchReadyOther: "The other player is ready.",
-                rematchNeedBoth: "Both players must choose rematch before the next game starts.",
+                rematchReadyCount: "Ready: {ready} / {total}",
+                rematchReadyAll: "All players are ready. Restarting...",
+                rematchReadyYou: "You are ready. Waiting for the remaining players...",
+                rematchNeedAll: "All players must be ready before restarting.",
                 ready: "Ready",
                 submitting: "Submitting...",
                 rematch: "Rematch",
@@ -649,16 +649,29 @@ createApp({
         };
 
         const buildGameResult = (gameState) => {
-            const players = gameState.players || [];
+            const players = Array.isArray(gameState.players) ? gameState.players : [];
             const winner = players.find((player) => String(player.userId) === String(gameState.winnerId));
             const readyIds = Array.isArray(gameState.rematchReadyPlayerIds) ? gameState.rematchReadyPlayerIds : [];
-            const isReady = readyIds.some((readyUserId) => String(readyUserId) === String(userId.value));
-            const otherReady = readyIds.some((readyUserId) => String(readyUserId) !== String(userId.value));
+            const playerIds = new Set(
+                players
+                    .filter((player) => player?.userId != null)
+                    .map((player) => String(player.userId))
+            );
+            const readyPlayerIds = new Set(
+                readyIds
+                    .filter((readyUserId) => readyUserId != null)
+                    .map((readyUserId) => String(readyUserId))
+                    .filter((readyUserId) => playerIds.has(readyUserId))
+            );
+            const readyCount = readyPlayerIds.size;
+            const totalPlayers = playerIds.size;
+            const isReady = userId.value != null && readyPlayerIds.has(String(userId.value));
+            const allReady = totalPlayers > 0 && readyCount === totalPlayers;
 
-            let statusText = t("rematchNeedBoth");
-            if (isReady && otherReady) statusText = t("rematchReadyBoth");
-            else if (isReady) statusText = t("rematchReadyYou");
-            else if (otherReady) statusText = t("rematchReadyOther");
+            let readinessText = t("rematchNeedAll");
+            if (allReady) readinessText = t("rematchReadyAll");
+            else if (isReady) readinessText = t("rematchReadyYou");
+            const statusText = `${t("rematchReadyCount", { ready: readyCount, total: totalPlayers })} · ${readinessText}`;
 
             return {
                 win: String(gameState.winnerId) === String(userId.value),
