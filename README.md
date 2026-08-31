@@ -53,7 +53,15 @@ For Railway or Render, use `backend/` as the deployable root directory.
 
 ### 1. Create a MySQL database
 
-Create a database such as `uno_db`.
+Run the checked-in bootstrap script as a MySQL administrator:
+
+```bash
+mysql -u root < database/create-database.sql
+```
+
+This creates `uno_db`. The backend uses Hibernate `ddl-auto=update` to create
+and update the application tables automatically when it starts, so a separate
+handwritten table schema is not required for local development.
 
 ### 2. Configure environment variables
 
