@@ -274,6 +274,7 @@
     transition: all 0.2s;
     cursor: pointer;
     user-select: none;
+    overflow: hidden;
 }
 
 .card.red {
@@ -778,5 +779,24 @@
 
     .help-section {
         font-size: 12px;
+    }
+
+    /* 移动端卡牌响应式：缩小字号，保证文字/数字/符号不溢出卡牌边界 */
+    .hand-cards .card {
+        width: clamp(52px, 14vw, 78px);
+        height: clamp(78px, 20vw, 112px);
+        padding: 6px;
+    }
+
+    .card-corner {
+        font-size: 9px;
+        white-space: nowrap;
+        overflow: hidden;
+    }
+
+    .card-center,
+    .card.wild .card-center {
+        font-size: clamp(11px, 4.5vw, 20px);
+        line-height: 1.1;
     }
 }
