@@ -796,7 +796,8 @@
 
     .card-center,
     .card.wild .card-center {
-        font-size: clamp(11px, 4.5vw, 20px);
+        font-size: clamp(11px, 3.6vw, 15px);
         line-height: 1.1;
+        overflow-wrap: normal;
     }
 }
