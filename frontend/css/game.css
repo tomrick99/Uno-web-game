@@ -310,7 +310,7 @@
 }
 
 .card-corner {
-    font-size: 12px;
+    font-size: clamp(7px, 0.9vw, 12px);
     line-height: 1;
 }
 
@@ -320,7 +320,7 @@
 }
 
 .card-center {
-    font-size: clamp(12px, 1.4rem, 24px);
+    font-size: clamp(12px, 1.6vw, 22.4px);
     text-align: center;
     flex: 1;
     display: flex;
@@ -331,7 +331,7 @@
 }
 
 .card.wild .card-center {
-    font-size: 22px;
+    font-size: clamp(12px, 1.55vw, 22px);
 }
 
 .card-back {
