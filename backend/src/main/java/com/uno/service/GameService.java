@@ -84,6 +84,23 @@ public class GameService {
         return withRoomLock(roomId, () -> doJoinGame(roomId, userId));
     }
 
+    public Map<String, Object> updateRoomConfigByAdmin(Long roomId,
+                                                       int maxPlayers,
+                                                       int totalRounds,
+                                                       int roundTimeLimitMinutes,
+                                                       GameMode gameMode,
+                                                       Long actorUserId,
+                                                       String actorName) {
+        return withRoomLock(roomId, () -> doUpdateRoomConfigByAdmin(
+                roomId,
+                maxPlayers,
+                totalRounds,
+                roundTimeLimitMinutes,
+                gameMode,
+                actorUserId,
+                actorName));
+    }
+
     public Map<String, Object> playCard(Long gameId, Long userId, int cardIndex, CardColor chosenColor) {
         Long roomId = getRoomIdByGameId(gameId);
         long startedAt = System.nanoTime();
@@ -340,28 +357,75 @@ public class GameService {
             wsService.broadcastLobbyRoomState(roomState, "PLAYER_JOINED", user.getUsername() + " joined the room");
         }
 
-        int currentPlayerCount = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game).size();
-        if (shouldStartGame(room, currentPlayerCount) && game.getStatus() == GameStatus.WAITING) {
-            startGame(game);
-            room.setStatus(RoomStatus.PLAYING);
-            roomRepository.save(room);
-            long version = bumpStateVersion(room.getId());
-            log.info("[SYNC] action=gameStarted roomId={} gameId={} currentTurn={} version={}",
-                    room.getId(), game.getId(), game.getCurrentTurn(), version);
-
-            Map<String, Object> roomState = getRoomStateWithVersion(room, game);
-            wsService.broadcastRoomState(roomState, "GAME_STARTED", "Game started");
-            wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Game started");
-            List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
-            wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "GAME_STARTED", userId, user.getUsername(), "Game started"));
-            sendPrivateHandPatches(game, players, "HAND_UPDATED");
-        } else if (game.getStatus() == GameStatus.PLAYING || game.getStatus() == GameStatus.FINISHED) {
+        boolean gameStarted = startWaitingGameIfReady(room, game, userId, user.getUsername());
+        if (!gameStarted && (game.getStatus() == GameStatus.PLAYING || game.getStatus() == GameStatus.FINISHED)) {
             Map<String, Object> roomState = getRoomStateWithVersion(room, game);
             wsService.broadcastRoomState(roomState, "PLAYER_SYNC", null);
             wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", null);
         }
 
         return buildRealtimeSnapshot(room.getId(), game.getId(), userId);
+    }
+
+    private Map<String, Object> doUpdateRoomConfigByAdmin(Long roomId,
+                                                          int maxPlayers,
+                                                          int totalRounds,
+                                                          int roundTimeLimitMinutes,
+                                                          GameMode gameMode,
+                                                          Long actorUserId,
+                                                          String actorName) {
+        roomService.updateRoomConfigByAdmin(
+                roomId,
+                maxPlayers,
+                totalRounds,
+                roundTimeLimitMinutes,
+                gameMode);
+
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
+        Game game = gameRepository.findByRoom(room).stream().findFirst().orElse(null);
+        if (game != null && startWaitingGameIfReady(room, game, actorUserId, actorName)) {
+            return getRoomStateWithVersion(room, game);
+        }
+
+        bumpStateVersion(roomId);
+        Map<String, Object> roomState = getRoomStateWithVersion(room, game);
+        wsService.broadcastRoomState(roomState, "ROOM_UPDATED", "Room updated");
+        wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Room updated");
+        return roomState;
+    }
+
+    private boolean startWaitingGameIfReady(Room room,
+                                            Game game,
+                                            Long actorUserId,
+                                            String actorName) {
+        int currentPlayerCount = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game).size();
+        if (room.getStatus() != RoomStatus.WAITING
+                || game.getStatus() != GameStatus.WAITING
+                || !shouldStartGame(room, currentPlayerCount)) {
+            return false;
+        }
+
+        startGame(game);
+        room.setStatus(RoomStatus.PLAYING);
+        roomRepository.save(room);
+        long version = bumpStateVersion(room.getId());
+        log.info("[SYNC] action=gameStarted roomId={} gameId={} currentTurn={} version={}",
+                room.getId(), game.getId(), game.getCurrentTurn(), version);
+
+        Map<String, Object> roomState = getRoomStateWithVersion(room, game);
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        wsService.broadcastRoomState(roomState, "GAME_STARTED", "Game started");
+        wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Game started");
+        wsService.broadcastPublicGamePatch(buildPublicGamePatch(
+                game,
+                players,
+                "GAME_STARTED",
+                actorUserId,
+                actorName,
+                "Game started"));
+        sendPrivateHandPatches(game, players, "HAND_UPDATED");
+        return true;
     }
 
     private Map<String, Object> doPlayCard(Long gameId, Long userId, int cardIndex, CardColor chosenColor) {

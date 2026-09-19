@@ -69,15 +69,15 @@ public class AdminController {
         }
 
         try {
-            Map<String, Object> roomState = roomService.updateRoomConfigByAdmin(
+            Map<String, Object> roomState = gameService.updateRoomConfigByAdmin(
                     roomId,
                     request.getMaxPlayers(),
                     request.getTotalRounds(),
                     request.getRoundTimeLimitMinutes(),
-                    request.getGameMode()
+                    request.getGameMode(),
+                    user.getId(),
+                    user.getUsername()
             );
-            wsService.broadcastRoomState(roomState, "ROOM_UPDATED", "Room updated");
-            wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Room updated");
             return ApiResponse.success("Room updated", roomState);
         } catch (IllegalArgumentException e) {
             return ApiResponse.error(400, e.getMessage());
