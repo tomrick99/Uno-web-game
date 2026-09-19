@@ -64,6 +64,7 @@
 }
 
 .input-group {
+    position: relative;
     margin-bottom: 20px;
 }
 
@@ -85,6 +86,40 @@
 
 .input-group input::placeholder {
     color: rgba(255, 255, 255, 0.3);
+}
+
+.password-input-group input {
+    padding-right: 98px;
+}
+
+.password-input-group input::-ms-reveal,
+.password-input-group input::-ms-clear {
+    display: none;
+}
+
+.password-toggle {
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    min-width: 74px;
+    min-height: 44px;
+    padding: 0 8px;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--yellow);
+    font-size: 14px;
+    font-weight: 600;
+    transform: translateY(-50%);
+}
+
+.password-toggle:hover,
+.password-toggle:focus-visible {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.password-toggle:focus-visible {
+    outline: 2px solid var(--yellow);
+    outline-offset: 1px;
 }
 
 .btn-primary {

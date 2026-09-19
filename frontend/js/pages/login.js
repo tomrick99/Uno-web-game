@@ -4,6 +4,8 @@ const apiBase = "/api";
 createApp({
     setup() {
         const isRegister = ref(false);
+        const showLoginPassword = ref(false);
+        const showRegisterPassword = ref(false);
         const errorMsg = ref("");
         const successMsg = ref("");
 
@@ -53,6 +55,16 @@ createApp({
             }
         };
 
-        return { isRegister, errorMsg, successMsg, loginForm, registerForm, login, register };
+        return {
+            isRegister,
+            showLoginPassword,
+            showRegisterPassword,
+            errorMsg,
+            successMsg,
+            loginForm,
+            registerForm,
+            login,
+            register
+        };
     }
 }).mount("#app");
