@@ -57,8 +57,6 @@ createApp({
         const drawingPenalty = ref(false);
         const playingCard = ref(false);
         const hasLoadedHand = ref(false);
-        const autoPenaltyInProgress = ref(false);
-        const lastAutoPenaltyKey = ref("");
 
         const stompClient = shallowRef(null);
         const roomSubscription = ref(null);
@@ -69,7 +67,6 @@ createApp({
         let reconnectTimer = null;
         let pollTimer = null;
         let fallbackActivationTimer = null;
-        let autoPenaltyTimer = null;
         let delegatedButtonHandler = null;
         let beforeUnloadHandler = null;
         let disconnectedAt = null;
@@ -420,17 +417,6 @@ createApp({
             return false;
         };
 
-        const getPendingDrawStateKey = () => {
-            if (!isPendingDrawStack.value) return "";
-            return [
-                gameId.value ?? "no-game",
-                currentTurn.value ?? "no-turn",
-                pendingDrawType.value,
-                Number(pendingDrawCount.value || 0),
-                formatCard(topCard.value)
-            ].join("|");
-        };
-
         const evaluatePlayability = (card, discardTopCard, activeColor) => {
             if (!card || !card.type || !card.color) return { canPlay: false, reason: "invalid card" };
             if (gameStatus.value !== "PLAYING") return { canPlay: false, reason: "game not playing" };
@@ -602,13 +588,6 @@ createApp({
             chosenColor.value = "";
         };
 
-        const clearAutoPenaltyTimer = () => {
-            if (autoPenaltyTimer) {
-                clearTimeout(autoPenaltyTimer);
-                autoPenaltyTimer = null;
-            }
-        };
-
         const refreshHandPlayability = () => {
             handCards.value = sortHandCards(handCards.value).map(decorateCard);
             if (selectedCard.value === null) return;
@@ -621,31 +600,10 @@ createApp({
             if (!needsColorPick.value) chosenColor.value = "";
         };
 
-        const syncPendingDrawUiState = () => {
-            clearAutoPenaltyTimer();
-            if (!isPendingDrawStack.value || !hasLoadedHand.value || !isMyTurn.value || gameStatus.value !== "PLAYING") {
-                autoPenaltyInProgress.value = false;
-                lastAutoPenaltyKey.value = "";
-                return;
-            }
-            if (hasPlayablePenaltyResponse.value) {
-                lastAutoPenaltyKey.value = "";
-                return;
-            }
-
-            const pendingKey = getPendingDrawStateKey();
-            if (!pendingKey || autoPenaltyInProgress.value || lastAutoPenaltyKey.value === pendingKey) return;
-            autoPenaltyTimer = setTimeout(() => {
-                autoPenaltyTimer = null;
-                drawPenaltyAction({ autoTriggered: true, pendingKey });
-            }, 150);
-        };
-
         const applyHandCards = (cards) => {
             hasLoadedHand.value = true;
             handCards.value = sortHandCards(cards).map(decorateCard);
             refreshHandPlayability();
-            syncPendingDrawUiState();
         };
 
         const buildGameResult = (gameState) => {
@@ -688,9 +646,6 @@ createApp({
             currentTurn.value = null;
             pendingDrawCount.value = 0;
             pendingDrawType.value = "NONE";
-            autoPenaltyInProgress.value = false;
-            lastAutoPenaltyKey.value = "";
-            clearAutoPenaltyTimer();
             gameResult.value = buildGameResult(gameState);
         };
 
@@ -728,9 +683,6 @@ createApp({
             restartingGame.value = false;
             drawingPenalty.value = false;
             hasLoadedHand.value = false;
-            autoPenaltyInProgress.value = false;
-            lastAutoPenaltyKey.value = "";
-            clearAutoPenaltyTimer();
         };
 
         const storeLobbyNotice = (message) => {
@@ -738,7 +690,6 @@ createApp({
         };
 
         const cleanupRealtime = () => {
-            clearAutoPenaltyTimer();
             if (pollTimer) {
                 clearInterval(pollTimer);
                 pollTimer = null;
@@ -1082,7 +1033,6 @@ createApp({
                 restartingGame.value = false;
             }
             refreshHandPlayability();
-            syncPendingDrawUiState();
         };
 
         const applyRealtimeState = (payload, source = "unknown") => {
@@ -1668,14 +1618,9 @@ createApp({
             }
         };
 
-        const drawPenaltyAction = async ({ autoTriggered = false, pendingKey = "" } = {}) => {
-            if (!autoTriggered && (!showDrawPenaltyButton.value || drawingPenalty.value)) return;
-            const resolvedPendingKey = pendingKey || getPendingDrawStateKey();
-            if (autoTriggered) {
-                if (!resolvedPendingKey || autoPenaltyInProgress.value || lastAutoPenaltyKey.value === resolvedPendingKey) return;
-                autoPenaltyInProgress.value = true;
-                lastAutoPenaltyKey.value = resolvedPendingKey;
-            }
+        // Unstackable penalties are resolved by the server; local hand snapshots must never auto-submit this action.
+        const drawPenaltyAction = async () => {
+            if (!showDrawPenaltyButton.value || drawingPenalty.value) return;
             drawingPenalty.value = true;
             try {
                 const response = await axios.post(`${apiBase}/game/${gameId.value}/draw-penalty`);
@@ -1686,16 +1631,13 @@ createApp({
                     }
                 } else {
                     showToastMessage(response.data.message || (language.value === "zh" ? "抽取罚牌失败" : "Failed to draw penalty"));
-                    if (autoTriggered) lastAutoPenaltyKey.value = "";
                     await refreshFromServer();
                 }
             } catch (error) {
                 showToastMessage(error.response?.data?.message || (language.value === "zh" ? "抽取罚牌失败" : "Failed to draw penalty"));
-                if (autoTriggered) lastAutoPenaltyKey.value = "";
                 await refreshFromServer();
             } finally {
                 drawingPenalty.value = false;
-                autoPenaltyInProgress.value = false;
             }
         };
 
@@ -1775,7 +1717,6 @@ createApp({
         onUnmounted(() => {
             shouldReconnect = false;
             cleanupRealtime();
-            clearAutoPenaltyTimer();
             if (beforeUnloadHandler) window.removeEventListener("beforeunload", beforeUnloadHandler);
             if (delegatedButtonHandler) document.removeEventListener("click", delegatedButtonHandler);
         });

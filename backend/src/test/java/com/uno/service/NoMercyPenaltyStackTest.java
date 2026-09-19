@@ -13,6 +13,17 @@ class NoMercyPenaltyStackTest {
     private final GameService gameService = new GameService(null, null, null, null, null, null);
 
     @Test
+    void plusTwoAcceptsEveryEqualOrHigherPenalty() {
+        Card topCard = new Card(CardColor.RED, CardType.DRAW_TWO, 20);
+
+        assertTrue(gameService.canStackNoMercyPenalty(new Card(CardColor.BLUE, CardType.DRAW_TWO, 20), topCard));
+        assertTrue(gameService.canStackNoMercyPenalty(new Card(CardColor.RED, CardType.DRAW_FOUR, 40), topCard));
+        assertTrue(gameService.canStackNoMercyPenalty(new Card(CardColor.WILD, CardType.WILD_REVERSE_DRAW_FOUR, 50), topCard));
+        assertTrue(gameService.canStackNoMercyPenalty(new Card(CardColor.WILD, CardType.WILD_DRAW_SIX, 60), topCard));
+        assertTrue(gameService.canStackNoMercyPenalty(new Card(CardColor.WILD, CardType.WILD_DRAW_TEN, 100), topCard));
+    }
+
+    @Test
     void plusFourCannotBeStackedWithPlusTwo() {
         Card topCard = new Card(CardColor.WILD, CardType.WILD_DRAW_FOUR, 50);
 
@@ -29,6 +40,7 @@ class NoMercyPenaltyStackTest {
         assertFalse(gameService.canStackNoMercyPenalty(new Card(CardColor.RED, CardType.DRAW_TWO, 20), topCard));
         assertFalse(gameService.canStackNoMercyPenalty(new Card(CardColor.RED, CardType.DRAW_FOUR, 40), topCard));
         assertFalse(gameService.canStackNoMercyPenalty(new Card(CardColor.WILD, CardType.WILD_DRAW_FOUR, 50), topCard));
+        assertFalse(gameService.canStackNoMercyPenalty(new Card(CardColor.WILD, CardType.WILD_REVERSE_DRAW_FOUR, 50), topCard));
         assertTrue(gameService.canStackNoMercyPenalty(new Card(CardColor.WILD, CardType.WILD_DRAW_SIX, 60), topCard));
         assertTrue(gameService.canStackNoMercyPenalty(new Card(CardColor.WILD, CardType.WILD_DRAW_TEN, 100), topCard));
     }
@@ -39,7 +51,19 @@ class NoMercyPenaltyStackTest {
 
         assertFalse(gameService.canStackNoMercyPenalty(new Card(CardColor.RED, CardType.DRAW_TWO, 20), topCard));
         assertFalse(gameService.canStackNoMercyPenalty(new Card(CardColor.RED, CardType.DRAW_FOUR, 40), topCard));
+        assertFalse(gameService.canStackNoMercyPenalty(new Card(CardColor.WILD, CardType.WILD_REVERSE_DRAW_FOUR, 50), topCard));
         assertFalse(gameService.canStackNoMercyPenalty(new Card(CardColor.WILD, CardType.WILD_DRAW_SIX, 60), topCard));
         assertTrue(gameService.canStackNoMercyPenalty(new Card(CardColor.WILD, CardType.WILD_DRAW_TEN, 100), topCard));
+    }
+
+    @Test
+    void reverseDrawFourHasTheSameStackValueAsOtherPlusFourCards() {
+        Card reverseDrawFour = new Card(CardColor.WILD, CardType.WILD_REVERSE_DRAW_FOUR, 50);
+        Card coloredDrawFour = new Card(CardColor.RED, CardType.DRAW_FOUR, 40);
+
+        assertTrue(gameService.canStackNoMercyPenalty(reverseDrawFour, coloredDrawFour));
+        assertTrue(gameService.canStackNoMercyPenalty(coloredDrawFour, reverseDrawFour));
+        assertFalse(gameService.canStackNoMercyPenalty(
+                new Card(CardColor.BLUE, CardType.DRAW_TWO, 20), reverseDrawFour));
     }
 }

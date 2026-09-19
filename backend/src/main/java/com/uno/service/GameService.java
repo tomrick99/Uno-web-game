@@ -20,12 +20,15 @@ import com.uno.repository.GameRepository;
 import com.uno.repository.RoomRepository;
 import com.uno.repository.UserRepository;
 import com.uno.websocket.GameWebSocketService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -40,7 +43,6 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
 @Service
-@Transactional
 public class GameService {
 
     private static final Logger log = LoggerFactory.getLogger(GameService.class);
@@ -63,6 +65,7 @@ public class GameService {
     private final UserRepository userRepository;
     private final GameWebSocketService wsService;
     private final RoomService roomService;
+    private final TransactionTemplate transactionTemplate;
     private final ConcurrentHashMap<Long, ReentrantLock> roomLocks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, AtomicLong> roomStateVersions = new ConcurrentHashMap<>();
 
@@ -78,17 +81,35 @@ public class GameService {
         this.userRepository = userRepository;
         this.wsService = wsService;
         this.roomService = roomService;
+        this.transactionTemplate = null;
+    }
+
+    @Autowired
+    public GameService(GameRepository gameRepository,
+                       GamePlayerRepository gamePlayerRepository,
+                       RoomRepository roomRepository,
+                       UserRepository userRepository,
+                       GameWebSocketService wsService,
+                       RoomService roomService,
+                       PlatformTransactionManager transactionManager) {
+        this.gameRepository = gameRepository;
+        this.gamePlayerRepository = gamePlayerRepository;
+        this.roomRepository = roomRepository;
+        this.userRepository = userRepository;
+        this.wsService = wsService;
+        this.roomService = roomService;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     public Map<String, Object> joinGame(Long roomId, Long userId) {
-        return withRoomLock(roomId, () -> doJoinGame(roomId, userId));
+        return withRoomLock(roomId, () -> inTransaction(() -> doJoinGame(roomId, userId)));
     }
 
     public Map<String, Object> playCard(Long gameId, Long userId, int cardIndex, CardColor chosenColor) {
         Long roomId = getRoomIdByGameId(gameId);
         long startedAt = System.nanoTime();
         try {
-            return withRoomLock(roomId, () -> doPlayCard(gameId, userId, cardIndex, chosenColor));
+            return withRoomLock(roomId, () -> inTransaction(() -> doPlayCard(gameId, userId, cardIndex, chosenColor)));
         } finally {
             long costMs = (System.nanoTime() - startedAt) / 1_000_000;
             log.info("[PERF] action=playCard roomId={} userId={} costMs={}", roomId, userId, costMs);
@@ -99,7 +120,7 @@ public class GameService {
         Long roomId = getRoomIdByGameId(gameId);
         long startedAt = System.nanoTime();
         try {
-            return withRoomLock(roomId, () -> doDrawCard(gameId, userId));
+            return withRoomLock(roomId, () -> inTransaction(() -> doDrawCard(gameId, userId)));
         } finally {
             long costMs = (System.nanoTime() - startedAt) / 1_000_000;
             log.info("[PERF] action=drawCard roomId={} userId={} costMs={}", roomId, userId, costMs);
@@ -110,7 +131,7 @@ public class GameService {
         Long roomId = getRoomIdByGameId(gameId);
         long startedAt = System.nanoTime();
         try {
-            return withRoomLock(roomId, () -> doDrawPenalty(gameId, userId));
+            return withRoomLock(roomId, () -> inTransaction(() -> doDrawPenalty(gameId, userId)));
         } finally {
             long costMs = (System.nanoTime() - startedAt) / 1_000_000;
             log.info("[PERF] action=drawPenalty roomId={} userId={} costMs={}", roomId, userId, costMs);
@@ -119,20 +140,20 @@ public class GameService {
 
     public Map<String, Object> readyForRematch(Long gameId, Long userId) {
         Long roomId = getRoomIdByGameId(gameId);
-        return withRoomLock(roomId, () -> doReadyForRematch(gameId, userId));
+        return withRoomLock(roomId, () -> inTransaction(() -> doReadyForRematch(gameId, userId)));
     }
 
     public Map<String, Object> leaveRoom(Long roomId, Long userId) {
-        return withRoomLock(roomId, () -> doLeaveRoom(roomId, userId));
+        return withRoomLock(roomId, () -> inTransaction(() -> doLeaveRoom(roomId, userId)));
     }
 
     public Map<String, Object> restartGame(Long gameId, Long userId) {
         Long roomId = getRoomIdByGameId(gameId);
-        return withRoomLock(roomId, () -> doRestartGame(gameId, userId));
+        return withRoomLock(roomId, () -> inTransaction(() -> doRestartGame(gameId, userId)));
     }
 
     public void deleteRoomByAdmin(Long roomId, String operatorName) {
-        withRoomLock(roomId, () -> {
+        withRoomLock(roomId, () -> inTransaction(() -> {
             Room room = roomRepository.findById(roomId)
                     .orElseThrow(() -> new IllegalArgumentException("Room not found"));
 
@@ -152,7 +173,7 @@ public class GameService {
             }
             roomRepository.delete(room);
             return null;
-        });
+        }));
     }
 
     @Transactional(readOnly = true)
@@ -1658,9 +1679,20 @@ public class GameService {
     }
 
     private Long getRoomIdByGameId(Long gameId) {
-        Game game = gameRepository.findById(gameId)
+        if (transactionTemplate == null) {
+            Game game = gameRepository.findById(gameId)
+                    .orElseThrow(() -> new IllegalArgumentException("Game not found"));
+            return game.getRoom().getId();
+        }
+        return gameRepository.findRoomIdByGameId(gameId)
                 .orElseThrow(() -> new IllegalArgumentException("Game not found"));
-        return game.getRoom().getId();
+    }
+
+    private <T> T inTransaction(Supplier<T> action) {
+        if (transactionTemplate == null || TransactionSynchronizationManager.isActualTransactionActive()) {
+            return action.get();
+        }
+        return transactionTemplate.execute(status -> action.get());
     }
 
     private <T> T withRoomLock(Long roomId, Supplier<T> action) {
