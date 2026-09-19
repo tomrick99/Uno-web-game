@@ -84,6 +84,43 @@ public class GameService {
         return withRoomLock(roomId, () -> doJoinGame(roomId, userId));
     }
 
+    public Map<String, Object> updateRoomConfigByAdmin(Long roomId,
+                                                       int maxPlayers,
+                                                       int totalRounds,
+                                                       int roundTimeLimitMinutes,
+                                                       GameMode gameMode,
+                                                       Long actorUserId,
+                                                       String actorName) {
+        return withRoomLock(roomId, () -> {
+            roomService.updateRoomConfigByAdmin(
+                    roomId,
+                    maxPlayers,
+                    totalRounds,
+                    roundTimeLimitMinutes,
+                    gameMode
+            );
+
+            Room room = roomRepository.findById(roomId)
+                    .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
+            Optional<Game> gameOpt = gameRepository.findByRoom(room).stream().findFirst();
+            if (gameOpt.isPresent()) {
+                Game game = gameOpt.get();
+                int currentPlayerCount = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game).size();
+                if (room.getStatus() == RoomStatus.WAITING
+                        && game.getStatus() == GameStatus.WAITING
+                        && shouldStartGame(room, currentPlayerCount)) {
+                    return startGameAndBroadcast(room, game, actorUserId, actorName);
+                }
+            }
+
+            bumpStateVersion(roomId);
+            Map<String, Object> roomState = getRoomStateWithVersion(room, gameOpt.orElse(null));
+            wsService.broadcastRoomState(roomState, "ROOM_UPDATED", "Room updated");
+            wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Room updated");
+            return roomState;
+        });
+    }
+
     public Map<String, Object> playCard(Long gameId, Long userId, int cardIndex, CardColor chosenColor) {
         Long roomId = getRoomIdByGameId(gameId);
         long startedAt = System.nanoTime();
@@ -342,19 +379,7 @@ public class GameService {
 
         int currentPlayerCount = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game).size();
         if (shouldStartGame(room, currentPlayerCount) && game.getStatus() == GameStatus.WAITING) {
-            startGame(game);
-            room.setStatus(RoomStatus.PLAYING);
-            roomRepository.save(room);
-            long version = bumpStateVersion(room.getId());
-            log.info("[SYNC] action=gameStarted roomId={} gameId={} currentTurn={} version={}",
-                    room.getId(), game.getId(), game.getCurrentTurn(), version);
-
-            Map<String, Object> roomState = getRoomStateWithVersion(room, game);
-            wsService.broadcastRoomState(roomState, "GAME_STARTED", "Game started");
-            wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Game started");
-            List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
-            wsService.broadcastPublicGamePatch(buildPublicGamePatch(game, players, "GAME_STARTED", userId, user.getUsername(), "Game started"));
-            sendPrivateHandPatches(game, players, "HAND_UPDATED");
+            startGameAndBroadcast(room, game, userId, user.getUsername());
         } else if (game.getStatus() == GameStatus.PLAYING || game.getStatus() == GameStatus.FINISHED) {
             Map<String, Object> roomState = getRoomStateWithVersion(room, game);
             wsService.broadcastRoomState(roomState, "PLAYER_SYNC", null);
@@ -758,6 +783,33 @@ public class GameService {
 
     private void startGame(Game game) {
         startGame(game, new Deck(resolveGameMode(game)));
+    }
+
+    private Map<String, Object> startGameAndBroadcast(Room room,
+                                                      Game game,
+                                                      Long actorUserId,
+                                                      String actorName) {
+        startGame(game);
+        room.setStatus(RoomStatus.PLAYING);
+        roomRepository.save(room);
+        long version = bumpStateVersion(room.getId());
+        log.info("[SYNC] action=gameStarted roomId={} gameId={} currentTurn={} version={}",
+                room.getId(), game.getId(), game.getCurrentTurn(), version);
+
+        Map<String, Object> roomState = getRoomStateWithVersion(room, game);
+        wsService.broadcastRoomState(roomState, "GAME_STARTED", "Game started");
+        wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Game started");
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        wsService.broadcastPublicGamePatch(buildPublicGamePatch(
+                game,
+                players,
+                "GAME_STARTED",
+                actorUserId,
+                actorName,
+                "Game started"
+        ));
+        sendPrivateHandPatches(game, players, "HAND_UPDATED");
+        return roomState;
     }
 
     void startGame(Game game, Deck deck) {
