@@ -12,6 +12,7 @@ import java.util.Optional;
 public interface GamePlayerRepository extends JpaRepository<GamePlayer, Long> {
     List<GamePlayer> findByGame(Game game);
     List<GamePlayer> findByGameOrderBySeatIndexAsc(Game game);
+    List<GamePlayer> findByUser(User user);
     Optional<GamePlayer> findByGameAndUser(Game game, User user);
     void deleteAllByGame(Game game);
 }

@@ -143,6 +143,44 @@ public class GameService {
         return withRoomLock(roomId, () -> doLeaveRoom(roomId, userId));
     }
 
+    public boolean handleOfflineTimeout(Long userId) {
+        Optional<User> userOpt = userRepository.findById(userId);
+        if (userOpt.isEmpty()) {
+            return false;
+        }
+
+        List<Long> playingRoomIds = gamePlayerRepository.findByUser(userOpt.get()).stream()
+                .map(GamePlayer::getGame)
+                .filter(game -> game != null && game.getStatus() == GameStatus.PLAYING)
+                .map(Game::getRoom)
+                .filter(room -> room != null && room.getStatus() == RoomStatus.PLAYING)
+                .map(Room::getId)
+                .distinct()
+                .toList();
+
+        boolean removed = false;
+        for (Long roomId : playingRoomIds) {
+            boolean removedFromRoom = withRoomLock(roomId, () -> {
+                Optional<Room> roomOpt = roomRepository.findById(roomId);
+                if (roomOpt.isEmpty() || roomOpt.get().getStatus() != RoomStatus.PLAYING) {
+                    return false;
+                }
+                Optional<Game> gameOpt = gameRepository.findByRoom(roomOpt.get()).stream().findFirst();
+                if (gameOpt.isEmpty() || gameOpt.get().getStatus() != GameStatus.PLAYING) {
+                    return false;
+                }
+                if (gamePlayerRepository.findByGameAndUser(gameOpt.get(), userOpt.get()).isEmpty()) {
+                    return false;
+                }
+                log.info("[UNO] offline timeout roomId={} playerId={}", roomId, userId);
+                doLeaveRoom(roomId, userId);
+                return true;
+            });
+            removed = removed || removedFromRoom;
+        }
+        return removed;
+    }
+
     public Map<String, Object> restartGame(Long gameId, Long userId) {
         Long roomId = getRoomIdByGameId(gameId);
         return withRoomLock(roomId, () -> doRestartGame(gameId, userId));

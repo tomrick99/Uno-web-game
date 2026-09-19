@@ -63,7 +63,21 @@ class GameServicePlayerLeaveTest {
     }
 
     @Test
-    void leavingPlayingGameEndsRoomWhenOnlyOnePlayerRemains() {
+    void offlineTimeoutUsesTheSameReverseTurnAndContinuationHandling() {
+        LeaveFixture fixture = fixture(false, 2L, List.of(1L, 3L, 4L));
+        when(fixture.gamePlayerRepository.findByUser(fixture.leavingPlayer.getUser()))
+                .thenReturn(List.of(fixture.leavingPlayer));
+
+        boolean removed = fixture.gameService.handleOfflineTimeout(2L);
+
+        assertTrue(removed);
+        assertEquals(1L, fixture.game.getCurrentTurn());
+        assertFalse(fixture.game.isClockwise());
+        verifyContinuationBroadcasts(fixture, 1L, -1);
+    }
+
+    @Test
+    void offlineTimeoutEndsRoomWhenOnlyOnePlayerRemains() {
         GameRepository gameRepository = mock(GameRepository.class);
         GamePlayerRepository gamePlayerRepository = mock(GamePlayerRepository.class);
         RoomRepository roomRepository = mock(RoomRepository.class);
@@ -88,13 +102,14 @@ class GameServicePlayerLeaveTest {
         when(roomRepository.findById(10L)).thenReturn(Optional.of(room));
         when(userRepository.findById(2L)).thenReturn(Optional.of(bob));
         when(gameRepository.findByRoom(room)).thenReturn(List.of(game));
+        when(gamePlayerRepository.findByUser(bob)).thenReturn(List.of(bobPlayer));
         when(gamePlayerRepository.findByGameAndUser(game, bob)).thenReturn(Optional.of(bobPlayer));
         when(gamePlayerRepository.findByGameOrderBySeatIndexAsc(game)).thenReturn(List.of(alicePlayer));
         when(roomService.getRoomState(room)).thenReturn(new LinkedHashMap<>(Map.of("roomId", 10L)));
 
-        Map<String, Object> result = gameService.leaveRoom(10L, 2L);
+        boolean removed = gameService.handleOfflineTimeout(2L);
 
-        assertTrue((Boolean) result.get("roomClosed"));
+        assertTrue(removed);
         assertEquals(RoomStatus.CLOSED, room.getStatus());
         verify(wsService).broadcastRoomDeleted(10L, 20L, "bob left the room");
         verify(gamePlayerRepository).deleteAllByGame(game);
@@ -153,7 +168,9 @@ class GameServicePlayerLeaveTest {
                 room,
                 remainingPlayers,
                 gameRepository,
+                gamePlayerRepository,
                 roomRepository,
+                leavingPlayer,
                 wsService);
     }
 
@@ -213,7 +230,9 @@ class GameServicePlayerLeaveTest {
                                 Room room,
                                 List<GamePlayer> remainingPlayers,
                                 GameRepository gameRepository,
+                                GamePlayerRepository gamePlayerRepository,
                                 RoomRepository roomRepository,
+                                GamePlayer leavingPlayer,
                                 GameWebSocketService wsService) {
     }
 }

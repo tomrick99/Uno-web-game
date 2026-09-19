@@ -3,6 +3,7 @@ package com.uno.config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.server.ServletServerHttpRequest;
 import org.springframework.http.server.ServerHttpRequest;
@@ -22,6 +23,7 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
 import org.springframework.web.socket.server.HandshakeInterceptor;
 import org.springframework.web.socket.server.support.DefaultHandshakeHandler;
 import org.springframework.web.socket.server.support.HttpSessionHandshakeInterceptor;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 import java.security.Principal;
 import java.util.Map;
@@ -34,6 +36,15 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Value("${spring.websocket.allowed-origin-patterns:http://localhost:*,http://127.0.0.1:*}")
     private String[] allowedOriginPatterns;
+
+    @Bean(name = "playerOfflineTaskScheduler")
+    public ThreadPoolTaskScheduler playerOfflineTaskScheduler() {
+        ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setPoolSize(1);
+        scheduler.setThreadNamePrefix("player-offline-");
+        scheduler.setWaitForTasksToCompleteOnShutdown(false);
+        return scheduler;
+    }
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
