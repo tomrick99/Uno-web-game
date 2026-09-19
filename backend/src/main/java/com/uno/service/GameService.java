@@ -126,6 +126,35 @@ public class GameService {
         return withRoomLock(roomId, () -> doLeaveRoom(roomId, userId));
     }
 
+    public void handlePlayerOfflineTimeout(String username) {
+        if (username == null || username.isBlank()) {
+            return;
+        }
+
+        Optional<User> userOpt = userRepository.findByUsername(username);
+        if (userOpt.isEmpty()) {
+            return;
+        }
+
+        User user = userOpt.get();
+        List<Long> roomIds = gamePlayerRepository.findByUser(user).stream()
+                .map(GamePlayer::getGame)
+                .filter(java.util.Objects::nonNull)
+                .map(Game::getRoom)
+                .filter(java.util.Objects::nonNull)
+                .map(Room::getId)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+
+        for (Long roomId : roomIds) {
+            withRoomLock(roomId, () -> {
+                doHandlePlayerOfflineTimeout(roomId, user);
+                return null;
+            });
+        }
+    }
+
     public Map<String, Object> restartGame(Long gameId, Long userId) {
         Long roomId = getRoomIdByGameId(gameId);
         return withRoomLock(roomId, () -> doRestartGame(gameId, userId));
@@ -744,6 +773,109 @@ public class GameService {
         result.put("message", "Left room");
         result.put("roomState", roomState);
         return result;
+    }
+
+    private void doHandlePlayerOfflineTimeout(Long roomId, User user) {
+        Optional<Room> roomOpt = roomRepository.findById(roomId);
+        if (roomOpt.isEmpty()) {
+            return;
+        }
+
+        Room room = roomOpt.get();
+        Optional<Game> gameOpt = gameRepository.findByRoom(room).stream().findFirst();
+        if (gameOpt.isEmpty()) {
+            return;
+        }
+
+        Game game = gameOpt.get();
+        if (room.getStatus() != RoomStatus.PLAYING || game.getStatus() != GameStatus.PLAYING) {
+            return;
+        }
+
+        Optional<GamePlayer> timedOutPlayerOpt = gamePlayerRepository.findByGameAndUser(game, user);
+        if (timedOutPlayerOpt.isEmpty()) {
+            return;
+        }
+
+        List<GamePlayer> orderedPlayers = new ArrayList<>(gamePlayerRepository.findByGameOrderBySeatIndexAsc(game));
+        GamePlayer timedOutPlayer = timedOutPlayerOpt.get();
+        int timedOutIndex = -1;
+        for (int i = 0; i < orderedPlayers.size(); i++) {
+            if (orderedPlayers.get(i).getUser().getId().equals(user.getId())) {
+                timedOutIndex = i;
+                break;
+            }
+        }
+        if (timedOutIndex < 0) {
+            return;
+        }
+
+        boolean wasCurrentPlayer = user.getId().equals(game.getCurrentTurn());
+        Long resumedTurn = game.getCurrentTurn();
+        if (wasCurrentPlayer && orderedPlayers.size() > 1) {
+            int nextIndex = nextSeatIndex(timedOutIndex, orderedPlayers.size(), game.isClockwise(), 1);
+            resumedTurn = orderedPlayers.get(nextIndex).getUser().getId();
+        }
+
+        gamePlayerRepository.delete(timedOutPlayer);
+        orderedPlayers.remove(timedOutIndex);
+
+        if (orderedPlayers.size() < 2) {
+            long version = bumpStateVersion(roomId);
+            Long gameId = game.getId();
+            String message = user.getUsername() + " timed out";
+            gamePlayerRepository.deleteAllByGame(game);
+            gameRepository.delete(game);
+            roomRepository.delete(room);
+            log.info("[SYNC] action=offlineTimeoutClosedRoom roomId={} gameId={} userId={} version={}",
+                    roomId, gameId, user.getId(), version);
+            publishAfterCommit("offlineTimeoutClosedRoom",
+                    () -> wsService.broadcastRoomDeleted(roomId, gameId, message));
+            return;
+        }
+
+        reseatPlayers(orderedPlayers);
+        if (wasCurrentPlayer) {
+            game.setCurrentTurn(resumedTurn);
+        }
+        if (user.getId().equals(game.getLastPenaltyPlayerId())) {
+            game.setLastPenaltyPlayerId(null);
+        }
+        if (room.getHost().getId().equals(user.getId())) {
+            room.setHost(orderedPlayers.get(0).getUser());
+        }
+
+        gameRepository.save(game);
+        roomRepository.save(room);
+        gamePlayerRepository.flush();
+        long version = bumpStateVersion(roomId);
+        String message = user.getUsername() + " timed out";
+        Map<String, Object> roomState = getRoomStateWithVersion(room, game);
+        PublicGamePatch publicPatch = buildPublicGamePatch(
+                game,
+                orderedPlayers,
+                "PLAYER_TIMEOUT",
+                user.getId(),
+                user.getUsername(),
+                message
+        );
+        List<PrivateHandPatchDelivery> handDeliveries = orderedPlayers.stream()
+                .map(player -> buildPrivateHandPatchDelivery(game, player, "HAND_UPDATED"))
+                .toList();
+
+        log.info("[SYNC] action=playerOfflineTimeout roomId={} gameId={} userId={} currentTurn={} direction={} remainingPlayers={} version={}",
+                roomId,
+                game.getId(),
+                user.getId(),
+                game.getCurrentTurn(),
+                game.isClockwise() ? 1 : -1,
+                orderedPlayers.size(),
+                version);
+        publishAfterCommit("playerOfflineTimeout", () -> {
+            wsService.broadcastRoomState(roomState, "PLAYER_TIMEOUT", message);
+            wsService.broadcastPublicGamePatch(publicPatch);
+            handDeliveries.forEach(this::sendPrivateHandPatch);
+        });
     }
 
     private Game createWaitingGame(Room room) {
