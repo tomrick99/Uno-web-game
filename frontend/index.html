@@ -28,8 +28,19 @@
                 <div class="input-group">
                     <input v-model="loginForm.username" type="text" placeholder="用户名" @keyup.enter="login">
                 </div>
-                <div class="input-group">
-                    <input v-model="loginForm.password" type="password" placeholder="密码" @keyup.enter="login">
+                <div class="input-group password-input">
+                    <input v-model="loginForm.password"
+                           :type="loginPasswordVisible ? 'text' : 'password'"
+                           placeholder="密码"
+                           autocomplete="current-password"
+                           @keyup.enter="login">
+                    <button type="button"
+                            class="password-toggle"
+                            :aria-label="loginPasswordVisible ? '隐藏登录密码' : '显示登录密码'"
+                            :aria-pressed="loginPasswordVisible"
+                            @click="loginPasswordVisible = !loginPasswordVisible">
+                        {{ loginPasswordVisible ? '隐藏' : '显示' }}
+                    </button>
                 </div>
                 <button class="btn-primary" @click="login">登录</button>
                 <p class="switch-text">没有账号？<a @click="isRegister = true">立即注册</a></p>
@@ -41,8 +52,19 @@
                 <div class="input-group">
                     <input v-model="registerForm.username" type="text" placeholder="用户名（3-20位）" @keyup.enter="register">
                 </div>
-                <div class="input-group">
-                    <input v-model="registerForm.password" type="password" placeholder="密码（6-32位）" @keyup.enter="register">
+                <div class="input-group password-input">
+                    <input v-model="registerForm.password"
+                           :type="registerPasswordVisible ? 'text' : 'password'"
+                           placeholder="密码（6-32位）"
+                           autocomplete="new-password"
+                           @keyup.enter="register">
+                    <button type="button"
+                            class="password-toggle"
+                            :aria-label="registerPasswordVisible ? '隐藏注册密码' : '显示注册密码'"
+                            :aria-pressed="registerPasswordVisible"
+                            @click="registerPasswordVisible = !registerPasswordVisible">
+                        {{ registerPasswordVisible ? '隐藏' : '显示' }}
+                    </button>
                 </div>
                 <button class="btn-primary" @click="register">注册</button>
                 <p class="switch-text">已有账号？<a @click="isRegister = false">去登录</a></p>

@@ -67,6 +67,10 @@
     margin-bottom: 20px;
 }
 
+.password-input {
+    position: relative;
+}
+
 .input-group input {
     width: 100%;
     padding: 15px 20px;
@@ -85,6 +89,45 @@
 
 .input-group input::placeholder {
     color: rgba(255, 255, 255, 0.3);
+}
+
+.password-input input {
+    padding-right: 72px;
+}
+
+.password-input input::-ms-clear,
+.password-input input::-ms-reveal {
+    display: none;
+}
+
+.password-toggle {
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    min-width: 52px;
+    min-height: 44px;
+    padding: 0 8px;
+    transform: translateY(-50%);
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    border-radius: 8px;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: bold;
+    touch-action: manipulation;
+}
+
+.password-toggle:hover,
+.password-toggle:focus-visible {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+}
+
+.password-toggle:focus-visible {
+    outline: 2px solid var(--blue);
+    outline-offset: 1px;
 }
 
 .btn-primary {

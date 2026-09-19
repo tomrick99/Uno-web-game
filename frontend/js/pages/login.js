@@ -6,6 +6,8 @@ createApp({
         const isRegister = ref(false);
         const errorMsg = ref("");
         const successMsg = ref("");
+        const loginPasswordVisible = ref(false);
+        const registerPasswordVisible = ref(false);
 
         const loginForm = reactive({ username: "", password: "" });
         const registerForm = reactive({ username: "", password: "" });
@@ -53,6 +55,16 @@ createApp({
             }
         };
 
-        return { isRegister, errorMsg, successMsg, loginForm, registerForm, login, register };
+        return {
+            isRegister,
+            errorMsg,
+            successMsg,
+            loginPasswordVisible,
+            registerPasswordVisible,
+            loginForm,
+            registerForm,
+            login,
+            register
+        };
     }
 }).mount("#app");
