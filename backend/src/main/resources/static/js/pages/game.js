@@ -40,6 +40,7 @@ createApp({
         const logExpanded = ref(false);
         const rulesExpanded = ref(false);
         const gameResult = ref(null);
+        const continuationPrompt = ref(null);
         const toastMsg = ref("");
         const toastType = ref("info");
         const toastVisible = ref(false);
@@ -147,6 +148,10 @@ createApp({
                 rematch: "再来一局",
                 gameOver: "游戏结束",
                 wins: "获胜",
+                playerLeftTitle: "有玩家退出",
+                playerLeftContinue: "{name} 已退出游戏。是否由剩余玩家继续当前游戏？",
+                continueGame: "继续游戏",
+                leaveGame: "退出游戏",
                 cardNumber: "数字牌：颜色相同或数字相同即可出。",
                 cardSkip: "跳过下一位玩家。",
                 cardReverse: "反转出牌方向。",
@@ -225,6 +230,10 @@ createApp({
                 rematch: "Rematch",
                 gameOver: "Game over",
                 wins: "wins",
+                playerLeftTitle: "Player Left",
+                playerLeftContinue: "{name} left the game. Continue with the remaining players?",
+                continueGame: "Continue Game",
+                leaveGame: "Leave Game",
                 cardNumber: "Number: play on matching color or matching number.",
                 cardSkip: "Skip the next player.",
                 cardReverse: "Reverse the play direction.",
@@ -731,6 +740,7 @@ createApp({
             currentPlayerName.value = t("waitingPlayers");
             clearCardSelection();
             gameResult.value = null;
+            continuationPrompt.value = null;
             clearToast();
             leavingRoom.value = false;
             restartingGame.value = false;
@@ -1248,6 +1258,32 @@ createApp({
             });
         };
 
+        const offerContinuationAfterPlayerLeft = (payload) => {
+            if (payload?.type !== "PLAYER_LEFT"
+                    || payload?.gameStatus !== "PLAYING"
+                    || !Array.isArray(payload.players)
+                    || payload.players.length < 2
+                    || String(payload.actorUserId) === String(userId.value)
+                    || !payload.players.some((player) => String(player.userId) === String(userId.value))) {
+                return;
+            }
+            continuationPrompt.value = {
+                key: `${payload.version ?? "none"}:${payload.actorUserId ?? "unknown"}`,
+                message: t("playerLeftContinue", {
+                    name: payload.actorName || (language.value === "zh" ? "一名玩家" : "A player")
+                })
+            };
+        };
+
+        const continueCurrentGame = () => {
+            continuationPrompt.value = null;
+        };
+
+        const leaveAfterPlayerExit = () => {
+            continuationPrompt.value = null;
+            returnToLobby({ force: true, notifyServer: true, skipConfirm: true });
+        };
+
         const handleMissingRoomOrGame = (error, fallbackMessage) => {
             const message = error?.response?.data?.message || fallbackMessage;
             if ([400, 404].includes(error?.response?.status)) {
@@ -1403,6 +1439,7 @@ createApp({
                     handleRoomDeleted(payload);
                     return;
                 }
+                offerContinuationAfterPlayerLeft(payload);
                 queueRealtimeBatch(payload);
             });
 
@@ -1818,6 +1855,7 @@ createApp({
             logExpanded,
             rulesExpanded,
             gameResult,
+            continuationPrompt,
             toastMsg,
             toastType,
             toastVisible,
@@ -1852,6 +1890,8 @@ createApp({
             drawCardAction,
             drawPenaltyAction,
             restartGameAction,
+            continueCurrentGame,
+            leaveAfterPlayerExit,
             returnToLobby
         };
     }

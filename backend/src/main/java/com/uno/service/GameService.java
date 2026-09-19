@@ -749,7 +749,8 @@ public class GameService {
         }
 
         log.info("[UNO] player left roomId={} playerId={}", roomId, userId);
-        gamePlayerRepository.delete(playerOpt.get());
+        GamePlayer leavingPlayer = playerOpt.get();
+        gamePlayerRepository.delete(leavingPlayer);
         List<GamePlayer> remainingPlayers = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
 
         if (remainingPlayers.isEmpty()) {
@@ -764,6 +765,43 @@ public class GameService {
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("roomClosed", true);
             result.put("message", "Left room");
+            return result;
+        }
+
+        if (room.getStatus() == RoomStatus.PLAYING
+                && game.getStatus() == GameStatus.PLAYING
+                && remainingPlayers.size() >= 2) {
+            if (userId.equals(game.getCurrentTurn())) {
+                game.setCurrentTurn(resolveTurnAfterDeparture(game, leavingPlayer, remainingPlayers));
+            }
+            reseatPlayers(remainingPlayers);
+            if (room.getHost().getId().equals(userId)) {
+                room.setHost(remainingPlayers.get(0).getUser());
+            }
+            gameRepository.save(game);
+            roomRepository.save(room);
+            long version = bumpStateVersion(roomId);
+            log.info("[SYNC] action=playerLeftContinuingGame roomId={} gameId={} userId={} currentTurn={} version={}",
+                    roomId, game.getId(), userId, game.getCurrentTurn(), version);
+
+            String message = user.getUsername() + " left the room";
+            Map<String, Object> roomState = getRoomStateWithVersion(room, game);
+            wsService.broadcastRoomState(roomState, "PLAYER_LEFT", message);
+            wsService.broadcastLobbyRoomState(roomState, "PLAYER_LEFT", message);
+            wsService.broadcastPublicGamePatch(buildPublicGamePatch(
+                    game,
+                    remainingPlayers,
+                    "PLAYER_LEFT",
+                    userId,
+                    user.getUsername(),
+                    message));
+            sendPrivateHandPatches(game, remainingPlayers, "HAND_UPDATED");
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("roomClosed", false);
+            result.put("gameContinues", true);
+            result.put("message", "Left room");
+            result.put("roomState", roomState);
             return result;
         }
 
@@ -808,6 +846,28 @@ public class GameService {
         result.put("message", "Left room");
         result.put("roomState", roomState);
         return result;
+    }
+
+    private Long resolveTurnAfterDeparture(Game game,
+                                           GamePlayer leavingPlayer,
+                                           List<GamePlayer> remainingPlayers) {
+        int leavingSeat = leavingPlayer.getSeatIndex();
+        if (game.isClockwise()) {
+            for (GamePlayer player : remainingPlayers) {
+                if (player.getSeatIndex() > leavingSeat) {
+                    return player.getUser().getId();
+                }
+            }
+            return remainingPlayers.get(0).getUser().getId();
+        }
+
+        for (int i = remainingPlayers.size() - 1; i >= 0; i--) {
+            GamePlayer player = remainingPlayers.get(i);
+            if (player.getSeatIndex() < leavingSeat) {
+                return player.getUser().getId();
+            }
+        }
+        return remainingPlayers.get(remainingPlayers.size() - 1).getUser().getId();
     }
 
     private Game createWaitingGame(Room room) {

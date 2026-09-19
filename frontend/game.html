@@ -157,6 +157,17 @@
             </div>
         </div>
 
+        <div v-if="continuationPrompt" :key="continuationPrompt.key" class="modal-overlay">
+            <div class="modal-card result-card">
+                <h2>{{ t("playerLeftTitle") }}</h2>
+                <p class="result-subtitle">{{ continuationPrompt.message }}</p>
+                <div class="result-actions">
+                    <button class="btn-secondary" @click="leaveAfterPlayerExit">{{ t("leaveGame") }}</button>
+                    <button class="btn-primary" @click="continueCurrentGame">{{ t("continueGame") }}</button>
+                </div>
+            </div>
+        </div>
+
         <div v-if="gameResult" class="modal-overlay">
             <div class="modal-card result-card">
                 <h2 :class="{ win: gameResult.win, lose: !gameResult.win }">{{ gameResult.title }}</h2>
