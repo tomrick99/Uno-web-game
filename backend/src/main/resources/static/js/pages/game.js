@@ -628,6 +628,14 @@ createApp({
                 lastAutoPenaltyKey.value = "";
                 return;
             }
+            // No Mercy penalties are resolved authoritatively by the server. A
+            // delayed private-hand patch must never make the client accept a
+            // penalty that the server knows can still be stacked.
+            if (gameMode.value === "NO_MERCY") {
+                autoPenaltyInProgress.value = false;
+                lastAutoPenaltyKey.value = "";
+                return;
+            }
             if (hasPlayablePenaltyResponse.value) {
                 lastAutoPenaltyKey.value = "";
                 return;

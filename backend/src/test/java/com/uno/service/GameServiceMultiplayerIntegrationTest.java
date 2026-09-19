@@ -188,6 +188,49 @@ class GameServiceMultiplayerIntegrationTest {
     }
 
     @Test
+    void noMercyPenaltyChainPreservesTotalAndReverseDirection() {
+        Fixture fixture = createGame(GameMode.NO_MERCY, List.of(
+                List.of(
+                        action(CardColor.RED, CardType.DRAW_TWO),
+                        action(CardColor.WILD, CardType.WILD_DRAW_SIX),
+                        number(CardColor.BLUE, 1)
+                ),
+                List.of(
+                        action(CardColor.WILD, CardType.WILD_REVERSE_DRAW_FOUR),
+                        number(CardColor.BLUE, 2)
+                ),
+                List.of(
+                        action(CardColor.WILD, CardType.WILD_DRAW_TEN),
+                        number(CardColor.BLUE, 3)
+                ),
+                List.of(
+                        action(CardColor.WILD, CardType.WILD_DRAW_TEN),
+                        number(CardColor.BLUE, 4)
+                )
+        ), drawPile(40));
+
+        gameService.playCard(fixture.gameId(), fixture.userId(0), 1, null);
+        assertPatch(lastPublicPatch(), fixture, 1, 1, 1, 2,
+                PendingDrawType.DRAW_STACK, List.of(2, 2, 2, 2), 0);
+
+        gameService.playCard(fixture.gameId(), fixture.userId(1), 0, CardColor.RED);
+        long version = assertPatch(lastPublicPatch(), fixture, 0, 0, -1, 6,
+                PendingDrawType.DRAW_STACK, List.of(2, 1, 2, 2), 0);
+
+        gameService.playCard(fixture.gameId(), fixture.userId(0), 0, CardColor.YELLOW);
+        version = assertPatch(lastPublicPatch(), fixture, 3, 3, -1, 12,
+                PendingDrawType.DRAW_STACK, List.of(1, 1, 2, 2), version);
+
+        gameService.playCard(fixture.gameId(), fixture.userId(3), 0, CardColor.GREEN);
+        version = assertPatch(lastPublicPatch(), fixture, 2, 2, -1, 22,
+                PendingDrawType.DRAW_STACK, List.of(1, 1, 2, 1), version);
+
+        gameService.playCard(fixture.gameId(), fixture.userId(2), 0, CardColor.BLUE);
+        assertPatch(lastPublicPatch(), fixture, 0, 0, -1, 0,
+                PendingDrawType.NONE, List.of(1, 33, 1, 1), version);
+    }
+
+    @Test
     void fourPlayerNormalTurnsCycleAcrossEverySeat() {
         Fixture fixture = createGame(List.of(
                 List.of(number(CardColor.RED, 1), number(CardColor.BLUE, 1)),
@@ -351,6 +394,10 @@ class GameServiceMultiplayerIntegrationTest {
     }
 
     private Fixture createGame(List<List<Card>> hands, List<Card> drawPile) {
+        return createGame(GameMode.CLASSIC, hands, drawPile);
+    }
+
+    private Fixture createGame(GameMode gameMode, List<List<Card>> hands, List<Card> drawPile) {
         List<User> users = new ArrayList<>();
         int sequence = ROOM_SEQUENCE.incrementAndGet();
         for (int index = 0; index < hands.size(); index++) {
@@ -367,7 +414,7 @@ class GameServiceMultiplayerIntegrationTest {
         room.setMaxPlayers(hands.size());
         room.setTotalRounds(8);
         room.setRoundTimeLimitMinutes(10);
-        room.setGameMode(GameMode.CLASSIC);
+        room.setGameMode(gameMode);
         room = roomRepository.save(room);
 
         Game game = new Game();
