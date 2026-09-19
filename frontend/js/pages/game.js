@@ -27,6 +27,8 @@ createApp({
         const pendingDrawCount = ref(0);
         const pendingDrawType = ref("NONE");
         const lastPenaltyPlayerId = ref(null);
+        const continuationPending = ref(false);
+        const continuationReadyPlayerIds = ref([]);
         const drawPileSize = ref(0);
         const topCard = ref(null);
         const handCards = ref([]);
@@ -56,6 +58,7 @@ createApp({
         const drawingCard = ref(false);
         const drawingPenalty = ref(false);
         const playingCard = ref(false);
+        const confirmingContinuation = ref(false);
         const hasLoadedHand = ref(false);
         const autoPenaltyInProgress = ref(false);
         const lastAutoPenaltyKey = ref("");
@@ -147,6 +150,11 @@ createApp({
                 rematch: "再来一局",
                 gameOver: "游戏结束",
                 wins: "获胜",
+                playerLeftTitle: "有玩家退出了游戏",
+                playerLeftPrompt: "所有剩余玩家确认后，将按当前方向和回合状态继续。",
+                continueGame: "继续游戏",
+                waitingContinue: "已确认，等待其他玩家…",
+                continuing: "确认中…",
                 cardNumber: "数字牌：颜色相同或数字相同即可出。",
                 cardSkip: "跳过下一位玩家。",
                 cardReverse: "反转出牌方向。",
@@ -225,6 +233,11 @@ createApp({
                 rematch: "Rematch",
                 gameOver: "Game over",
                 wins: "wins",
+                playerLeftTitle: "A player left the game",
+                playerLeftPrompt: "The game will resume with the current direction and turn after every remaining player confirms.",
+                continueGame: "Continue game",
+                waitingContinue: "Confirmed; waiting for other players…",
+                continuing: "Confirming…",
                 cardNumber: "Number: play on matching color or matching number.",
                 cardSkip: "Skip the next player.",
                 cardReverse: "Reverse the play direction.",
@@ -286,7 +299,10 @@ createApp({
         const isNumberType = (type) => type === "NUMBER";
 
         const isMyTurn = computed(() =>
-            gameStatus.value === "PLAYING" && String(currentTurn.value) === String(userId.value)
+            gameStatus.value === "PLAYING" && !continuationPending.value && String(currentTurn.value) === String(userId.value)
+        );
+        const hasConfirmedContinuation = computed(() =>
+            continuationReadyPlayerIds.value.some((id) => String(id) === String(userId.value))
         );
         const isPendingDrawStack = computed(() =>
             Number(pendingDrawCount.value) > 0 && pendingDrawType.value !== "NONE"
@@ -561,6 +577,7 @@ createApp({
 
         const turnLabel = computed(() => {
             if (gameStatus.value === "FINISHED") return t("gameFinished");
+            if (continuationPending.value) return t("waitingContinue");
             if (gameStatus.value !== "PLAYING") {
                 return `${t("waitingPlayers")} (${playerCount.value}/${maxPlayers.value})`;
             }
@@ -677,7 +694,7 @@ createApp({
                 win: String(gameState.winnerId) === String(userId.value),
                 title: winner ? `${winner.username} ${t("wins")}!` : t("gameOver"),
                 statusText,
-                rematchButtonDisabled: restartingGame.value || isReady,
+                rematchButtonDisabled: totalPlayers < 2 || restartingGame.value || isReady,
                 rematchButtonText: isReady ? t("ready") : (restartingGame.value ? t("submitting") : t("rematch"))
             };
         };
@@ -688,6 +705,8 @@ createApp({
             currentTurn.value = null;
             pendingDrawCount.value = 0;
             pendingDrawType.value = "NONE";
+            continuationPending.value = false;
+            continuationReadyPlayerIds.value = [];
             autoPenaltyInProgress.value = false;
             lastAutoPenaltyKey.value = "";
             clearAutoPenaltyTimer();
@@ -715,6 +734,8 @@ createApp({
             pendingDrawCount.value = 0;
             pendingDrawType.value = "NONE";
             lastPenaltyPlayerId.value = null;
+            continuationPending.value = false;
+            continuationReadyPlayerIds.value = [];
             drawPileSize.value = 0;
             topCard.value = null;
             handCards.value = [];
@@ -726,6 +747,7 @@ createApp({
             clearToast();
             leavingRoom.value = false;
             restartingGame.value = false;
+            confirmingContinuation.value = false;
             drawingPenalty.value = false;
             hasLoadedHand.value = false;
             autoPenaltyInProgress.value = false;
@@ -890,6 +912,8 @@ createApp({
                 copyField("drawPileSize");
                 copyField("winnerId");
                 copyField("rematchReadyPlayerIds");
+                copyField("continuationPending");
+                copyField("continuationReadyPlayerIds");
                 if (hasOwnField(payload, "direction")) {
                     gameState.clockwise = payload.direction !== -1;
                 }
@@ -1029,6 +1053,8 @@ createApp({
             roomStatus.value = roomState.status || roomStatus.value;
             applyRoomConfig(roomState);
             roomPlayerCount.value = Number(roomState.playerCount ?? roomState.players?.length ?? roomPlayerCount.value ?? 0);
+            if (hasOwnField(roomState, "continuationPending")) continuationPending.value = Boolean(roomState.continuationPending);
+            if (Array.isArray(roomState.continuationReadyPlayerIds)) continuationReadyPlayerIds.value = roomState.continuationReadyPlayerIds;
             if (roomState.gameId) {
                 applyGameId(roomState.gameId, {
                     source: `${source}:room`,
@@ -1062,6 +1088,8 @@ createApp({
             if (hasOwnField(gameState, "pendingDrawCount")) pendingDrawCount.value = Number(gameState.pendingDrawCount ?? 0);
             if (hasOwnField(gameState, "pendingDrawType")) pendingDrawType.value = gameState.pendingDrawType ?? "NONE";
             if (hasOwnField(gameState, "lastPenaltyPlayerId")) lastPenaltyPlayerId.value = gameState.lastPenaltyPlayerId;
+            if (hasOwnField(gameState, "continuationPending")) continuationPending.value = Boolean(gameState.continuationPending);
+            if (Array.isArray(gameState.continuationReadyPlayerIds)) continuationReadyPlayerIds.value = gameState.continuationReadyPlayerIds;
             if (hasOwnField(gameState, "drawPileSize")) drawPileSize.value = Number(gameState.drawPileSize ?? 0);
             if (hasOwnField(gameState, "topCard") && gameState.topCard) {
                 topCard.value = {
@@ -1719,6 +1747,26 @@ createApp({
             }
         };
 
+        const continueGameAction = async () => {
+            if (!gameId.value || !continuationPending.value || hasConfirmedContinuation.value || confirmingContinuation.value) return;
+            confirmingContinuation.value = true;
+            try {
+                const response = await axios.post(`${apiBase}/game/${gameId.value}/continue`);
+                if (response.data.code === 200) {
+                    if (shouldRefreshAfterAck(response)) {
+                        await refreshFromServer({ reason: "continue-ack" });
+                    }
+                } else {
+                    showToastMessage(response.data.message || (language.value === "zh" ? "继续游戏失败" : "Failed to continue game"));
+                }
+            } catch (error) {
+                showToastMessage(error.response?.data?.message || (language.value === "zh" ? "继续游戏失败" : "Failed to continue game"));
+                await refreshFromServer();
+            } finally {
+                confirmingContinuation.value = false;
+            }
+        };
+
         const handleDelegatedButtonClick = (event) => {
             const button = event.target.closest("#backToLobbyButton, #endReturnLobbyBtn, #restartGameBtn, #drawPenaltyButton");
             if (!button || button.disabled) return;
@@ -1795,6 +1843,9 @@ createApp({
             pendingDrawCount,
             pendingDrawType,
             lastPenaltyPlayerId,
+            continuationPending,
+            continuationReadyPlayerIds,
+            hasConfirmedContinuation,
             drawPileSize,
             topCard,
             handCards,
@@ -1821,6 +1872,7 @@ createApp({
             drawingCard,
             drawingPenalty,
             playingCard,
+            confirmingContinuation,
             canDraw,
             canPlaySelected,
             showPenaltyNotice,
@@ -1844,6 +1896,7 @@ createApp({
             drawCardAction,
             drawPenaltyAction,
             restartGameAction,
+            continueGameAction,
             returnToLobby
         };
     }

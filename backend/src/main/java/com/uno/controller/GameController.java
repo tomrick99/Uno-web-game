@@ -136,6 +136,22 @@ public class GameController {
         }
     }
 
+    @PostMapping("/{gameId}/continue")
+    public ApiResponse<Map<String, Object>> continueGame(@PathVariable Long gameId, HttpSession session) {
+        Long userId = getCurrentUserId(session);
+        if (userId == null) {
+            return unauthorized();
+        }
+
+        try {
+            return ApiResponse.success("Continue response recorded", gameService.confirmContinue(gameId, userId));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.error(400, e.getMessage());
+        } catch (RuntimeException e) {
+            return ApiResponse.error(500, e.getMessage());
+        }
+    }
+
     @GetMapping("/room/{roomId}/state")
     public ApiResponse<Map<String, Object>> getGameStateByRoom(@PathVariable Long roomId) {
         try {

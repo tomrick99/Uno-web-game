@@ -187,11 +187,14 @@ public class RoomService {
             List<Map<String, Object>> players = new ArrayList<>();
             Long gameId = null;
             String gameStatus = null;
+            boolean continuationPending = false;
+            List<Long> continuationReadyPlayerIds = new ArrayList<>();
 
             if (gameOpt.isPresent()) {
                 Game game = gameOpt.get();
                 gameId = game.getId();
                 gameStatus = game.getStatus().name();
+                continuationPending = game.isContinuationPending();
 
                 List<GamePlayer> gamePlayers = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
                 for (GamePlayer gp : gamePlayers) {
@@ -202,7 +205,11 @@ public class RoomService {
                     player.put("handCount", gp.getHandCards().size());
                     player.put("saidUno", gp.isSaidUno());
                     player.put("host", gp.getUser().getId().equals(room.getHost().getId()));
+                    player.put("continuationReady", gp.isContinuationReady());
                     players.add(player);
+                    if (gp.isContinuationReady()) {
+                        continuationReadyPlayerIds.add(gp.getUser().getId());
+                    }
                 }
             }
 
@@ -211,6 +218,8 @@ public class RoomService {
             state.put("playerNames", players.stream().map(player -> String.valueOf(player.get("username"))).toList());
             state.put("gameId", gameId);
             state.put("gameStatus", gameStatus);
+            state.put("continuationPending", continuationPending);
+            state.put("continuationReadyPlayerIds", continuationReadyPlayerIds);
             state.put("started", room.getStatus() == RoomStatus.PLAYING);
             return state;
         } finally {

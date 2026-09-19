@@ -126,6 +126,11 @@ public class GameService {
         return withRoomLock(roomId, () -> doLeaveRoom(roomId, userId));
     }
 
+    public Map<String, Object> confirmContinue(Long gameId, Long userId) {
+        Long roomId = getRoomIdByGameId(gameId);
+        return withRoomLock(roomId, () -> doConfirmContinue(gameId, userId));
+    }
+
     public Map<String, Object> restartGame(Long gameId, Long userId) {
         Long roomId = getRoomIdByGameId(gameId);
         return withRoomLock(roomId, () -> doRestartGame(gameId, userId));
@@ -220,6 +225,7 @@ public class GameService {
         state.put("lastPenaltyPlayerId", game.getLastPenaltyPlayerId());
         state.put("clockwise", game.isClockwise());
         state.put("direction", game.isClockwise() ? 1 : -1);
+        state.put("continuationPending", game.isContinuationPending());
         state.put("canRestart", game.getStatus() == GameStatus.FINISHED);
 
         state.put("topCard", topCard != null ? cardToMap(topCard) : null);
@@ -227,6 +233,7 @@ public class GameService {
 
         List<Map<String, Object>> players = new ArrayList<>();
         List<Long> rematchReadyPlayerIds = new ArrayList<>();
+        List<Long> continuationReadyPlayerIds = new ArrayList<>();
         Long winnerId = null;
         for (GamePlayer gp : gamePlayerRepository.findByGameOrderBySeatIndexAsc(game)) {
             List<Card> hand = sortHandCards(gp.getHandCards());
@@ -236,6 +243,9 @@ public class GameService {
             if (gp.isRematchReady()) {
                 rematchReadyPlayerIds.add(gp.getUser().getId());
             }
+            if (gp.isContinuationReady()) {
+                continuationReadyPlayerIds.add(gp.getUser().getId());
+            }
 
             Map<String, Object> player = new LinkedHashMap<>();
             player.put("userId", gp.getUser().getId());
@@ -244,12 +254,14 @@ public class GameService {
             player.put("seatIndex", gp.getSeatIndex());
             player.put("saidUno", gp.isSaidUno());
             player.put("rematchReady", gp.isRematchReady());
+            player.put("continuationReady", gp.isContinuationReady());
             players.add(player);
         }
 
         state.put("players", players);
         state.put("winnerId", winnerId);
         state.put("rematchReadyPlayerIds", rematchReadyPlayerIds);
+        state.put("continuationReadyPlayerIds", continuationReadyPlayerIds);
         state.put("rematchReadyCount", rematchReadyPlayerIds.size());
         state.put("allPlayersReadyForRematch",
                 game.getStatus() == GameStatus.FINISHED
@@ -330,6 +342,7 @@ public class GameService {
             gp.setSeatIndex(playerCount);
             gp.setSaidUno(false);
             gp.setRematchReady(false);
+            gp.setContinuationReady(false);
             gp.setHandCards(new ArrayList<>());
             gamePlayerRepository.save(gp);
             bumpStateVersion(roomId);
@@ -371,6 +384,7 @@ public class GameService {
         if (game.getStatus() != GameStatus.PLAYING) {
             throw new IllegalArgumentException("Game is not in playing state");
         }
+        requireContinuationResolved(game);
         if (!userId.equals(game.getCurrentTurn())) {
             logUnoPlay(userId, null, getTopDiscard(game), game.getCurrentColor(), game.getPendingDrawCount(), false, false,
                     "not current player", game.getCurrentTurn());
@@ -491,6 +505,7 @@ public class GameService {
         if (game.getStatus() != GameStatus.PLAYING) {
             throw new IllegalArgumentException("Game is not in playing state");
         }
+        requireContinuationResolved(game);
         if (!userId.equals(game.getCurrentTurn())) {
             throw new IllegalArgumentException("It is not your turn to draw");
         }
@@ -548,6 +563,7 @@ public class GameService {
         if (game.getStatus() != GameStatus.PLAYING) {
             throw new IllegalArgumentException("Game is not in playing state");
         }
+        requireContinuationResolved(game);
         if (!userId.equals(game.getCurrentTurn())) {
             throw new IllegalArgumentException("It is not your turn");
         }
@@ -597,6 +613,9 @@ public class GameService {
 
         if (game.getStatus() != GameStatus.FINISHED) {
             throw new IllegalArgumentException("Rematch is only available after the game finishes");
+        }
+        if (gamePlayerRepository.findByGameOrderBySeatIndexAsc(game).size() < 2) {
+            throw new IllegalArgumentException("At least two players are required for a rematch");
         }
 
         if (!player.isRematchReady()) {
@@ -684,9 +703,23 @@ public class GameService {
             return result;
         }
 
+        List<GamePlayer> playersBeforeLeave = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        int leavingSeatIndex = 0;
+        for (int index = 0; index < playersBeforeLeave.size(); index++) {
+            if (playersBeforeLeave.get(index).getUser().getId().equals(userId)) {
+                leavingSeatIndex = index;
+                break;
+            }
+        }
         log.info("[UNO] player left roomId={} playerId={}", roomId, userId);
         gamePlayerRepository.delete(playerOpt.get());
-        List<GamePlayer> remainingPlayers = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        List<GamePlayer> remainingPlayers = playersBeforeLeave.stream()
+                .filter(player -> !player.getUser().getId().equals(userId))
+                .toList();
+
+        if (room.getStatus() == RoomStatus.PLAYING && game.getStatus() == GameStatus.PLAYING) {
+            return handlePlayingGameDeparture(room, game, user, userId, leavingSeatIndex, remainingPlayers);
+        }
 
         if (remainingPlayers.isEmpty()) {
             long version = bumpStateVersion(roomId);
@@ -746,6 +779,146 @@ public class GameService {
         return result;
     }
 
+    private Map<String, Object> handlePlayingGameDeparture(Room room,
+                                                            Game game,
+                                                            User user,
+                                                            Long userId,
+                                                            int leavingSeatIndex,
+                                                            List<GamePlayer> remainingPlayers) {
+        Long roomId = room.getId();
+        boolean departingCurrentPlayer = userId.equals(game.getCurrentTurn());
+
+        reseatPlayers(remainingPlayers);
+        if (room.getHost().getId().equals(userId) && !remainingPlayers.isEmpty()) {
+            room.setHost(remainingPlayers.get(0).getUser());
+        }
+
+        if (remainingPlayers.size() < 2) {
+            game.setStatus(GameStatus.FINISHED);
+            game.setCurrentTurn(null);
+            game.setContinuationPending(false);
+            clearContinuationReady(remainingPlayers);
+            clearPendingDraw(game);
+            room.setStatus(RoomStatus.CLOSED);
+            gameRepository.save(game);
+            roomRepository.save(room);
+            long version = bumpStateVersion(roomId);
+            Map<String, Object> roomState = getRoomStateWithVersion(room, game);
+            PublicGamePatch gamePatch = buildPublicGamePatch(
+                    game,
+                    remainingPlayers,
+                    "GAME_ENDED_PLAYER_LEFT",
+                    userId,
+                    user.getUsername(),
+                    "Game ended because fewer than two players remain"
+            );
+            publishAfterCommit("playerLeftGameEnded", () -> {
+                wsService.broadcastRoomState(roomState, "GAME_ENDED_PLAYER_LEFT", "Not enough players to continue");
+                wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Game ended");
+                wsService.broadcastPublicGamePatch(gamePatch);
+            });
+            log.info("[SYNC] action=playerLeftGameEnded roomId={} gameId={} userId={} remaining={} version={}",
+                    roomId, game.getId(), userId, remainingPlayers.size(), version);
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("roomClosed", true);
+            result.put("gameEnded", true);
+            result.put("message", "Left room; game ended because fewer than two players remain");
+            return result;
+        }
+
+        if (departingCurrentPlayer) {
+            game.setCurrentTurn(turnAfterDeparture(remainingPlayers, leavingSeatIndex, game.isClockwise()));
+        }
+
+        boolean alreadyAwaitingConfirmation = game.isContinuationPending();
+        if (!alreadyAwaitingConfirmation) {
+            clearContinuationReady(remainingPlayers);
+        }
+        game.setContinuationPending(true);
+        if (allPlayersReadyToContinue(remainingPlayers)) {
+            game.setContinuationPending(false);
+            clearContinuationReady(remainingPlayers);
+        }
+        room.setStatus(RoomStatus.PLAYING);
+        gameRepository.save(game);
+        roomRepository.save(room);
+        long version = bumpStateVersion(roomId);
+
+        String event = game.isContinuationPending() ? "PLAYER_LEFT_CONFIRM_REQUIRED" : "GAME_CONTINUED";
+        String message = game.isContinuationPending()
+                ? user.getUsername() + " left. Confirm to continue the game."
+                : user.getUsername() + " left. The remaining confirmed players continue.";
+        Map<String, Object> roomState = getRoomStateWithVersion(room, game);
+        PublicGamePatch gamePatch = buildPublicGamePatch(game, remainingPlayers, event, userId, user.getUsername(), message);
+        publishAfterCommit("playerLeftPlayingGame", () -> {
+            wsService.broadcastRoomState(roomState, event, message);
+            wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", message);
+            wsService.broadcastPublicGamePatch(gamePatch);
+        });
+        log.info("[SYNC] action=playerLeftPlayingGame roomId={} gameId={} userId={} currentTurn={} direction={} continuationPending={} version={}",
+                roomId,
+                game.getId(),
+                userId,
+                game.getCurrentTurn(),
+                game.isClockwise() ? 1 : -1,
+                game.isContinuationPending(),
+                version);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("roomClosed", false);
+        result.put("gameEnded", false);
+        result.put("continuationPending", game.isContinuationPending());
+        result.put("message", "Left room");
+        return result;
+    }
+
+    private Map<String, Object> doConfirmContinue(Long gameId, Long userId) {
+        Game game = gameRepository.findById(gameId)
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
+        User user = userRepository.getReferenceById(userId);
+        GamePlayer player = gamePlayerRepository.findByGameAndUser(game, user)
+                .orElseThrow(() -> new IllegalArgumentException("Only remaining players can continue the game"));
+
+        if (game.getStatus() != GameStatus.PLAYING) {
+            throw new IllegalArgumentException("Game is not in playing state");
+        }
+        if (!game.isContinuationPending()) {
+            return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "GAME_CONTINUED");
+        }
+
+        if (!player.isContinuationReady()) {
+            player.setContinuationReady(true);
+            gamePlayerRepository.save(player);
+        }
+
+        List<GamePlayer> remainingPlayers = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        boolean allReady = remainingPlayers.size() >= 2 && allPlayersReadyToContinue(remainingPlayers);
+        String event;
+        String message;
+        if (allReady) {
+            game.setContinuationPending(false);
+            clearContinuationReady(remainingPlayers);
+            event = "GAME_CONTINUED";
+            message = "All remaining players confirmed. Game continued.";
+        } else {
+            event = "CONTINUE_READY";
+            message = user.getUsername() + " confirmed. Waiting for the remaining players.";
+        }
+        gameRepository.save(game);
+        long version = bumpStateVersion(game.getRoom().getId());
+
+        Map<String, Object> roomState = getRoomStateWithVersion(game.getRoom(), game);
+        PublicGamePatch gamePatch = buildPublicGamePatch(game, remainingPlayers, event, userId, user.getUsername(), message);
+        publishAfterCommit("confirmContinue", () -> {
+            wsService.broadcastRoomState(roomState, event, message);
+            wsService.broadcastPublicGamePatch(gamePatch);
+        });
+        log.info("[SYNC] action=confirmContinue roomId={} gameId={} userId={} allReady={} version={}",
+                game.getRoom().getId(), game.getId(), userId, allReady, version);
+        return operationAck(game.getRoom().getId(), game.getId(), version, event);
+    }
+
     private Game createWaitingGame(Room room) {
         Game game = new Game();
         game.setRoom(room);
@@ -763,8 +936,10 @@ public class GameService {
     void startGame(Game game, Deck deck) {
         game.setStatus(GameStatus.PLAYING);
         game.setClockwise(true);
+        game.setContinuationPending(false);
         clearPendingDraw(game);
         clearRematchReady(game);
+        clearContinuationReady(gamePlayerRepository.findByGameOrderBySeatIndexAsc(game));
         dealCards(game, deck);
         gameRepository.save(game);
     }
@@ -1191,6 +1366,25 @@ public class GameService {
         return !players.isEmpty() && players.stream().allMatch(GamePlayer::isRematchReady);
     }
 
+    private void clearContinuationReady(List<GamePlayer> players) {
+        for (GamePlayer player : players) {
+            if (player.isContinuationReady()) {
+                player.setContinuationReady(false);
+                gamePlayerRepository.save(player);
+            }
+        }
+    }
+
+    private boolean allPlayersReadyToContinue(List<GamePlayer> players) {
+        return !players.isEmpty() && players.stream().allMatch(GamePlayer::isContinuationReady);
+    }
+
+    private void requireContinuationResolved(Game game) {
+        if (game.isContinuationPending()) {
+            throw new IllegalArgumentException("Waiting for all remaining players to confirm continuation");
+        }
+    }
+
     private void logUnoPlay(Long playerId,
                             Card card,
                             Card topCard,
@@ -1250,6 +1444,16 @@ public class GameService {
             player.setSeatIndex(i);
             gamePlayerRepository.save(player);
         }
+    }
+
+    private Long turnAfterDeparture(List<GamePlayer> remainingPlayers, int departedIndex, boolean clockwise) {
+        if (remainingPlayers.isEmpty()) {
+            return null;
+        }
+        int nextIndex = clockwise
+                ? Math.floorMod(departedIndex, remainingPlayers.size())
+                : Math.floorMod(departedIndex - 1, remainingPlayers.size());
+        return remainingPlayers.get(nextIndex).getUser().getId();
     }
 
     boolean shouldStartGame(Room room, int currentPlayerCount) {
@@ -1433,6 +1637,7 @@ public class GameService {
             String currentPlayerName = null;
             Long winnerId = null;
             List<Long> rematchReadyPlayerIds = new ArrayList<>();
+            List<Long> continuationReadyPlayerIds = new ArrayList<>();
             List<PublicPlayerInfo> publicPlayers = new ArrayList<>();
             for (GamePlayer player : players) {
                 boolean currentPlayer = player.getUser().getId().equals(currentPlayerId);
@@ -1444,6 +1649,9 @@ public class GameService {
                 }
                 if (player.isRematchReady()) {
                     rematchReadyPlayerIds.add(player.getUser().getId());
+                }
+                if (player.isContinuationReady()) {
+                    continuationReadyPlayerIds.add(player.getUser().getId());
                 }
                 publicPlayers.add(new PublicPlayerInfo(
                         player.getUser().getId(),
@@ -1479,6 +1687,8 @@ public class GameService {
                     publicPlayers,
                     winnerId,
                     rematchReadyPlayerIds,
+                    game.isContinuationPending(),
+                    continuationReadyPlayerIds,
                     message,
                     false
             );

@@ -38,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
@@ -298,6 +299,106 @@ class GameServiceMultiplayerIntegrationTest {
         assertEquals(0, penaltyPatch.pendingPenalty());
         assertEquals(PendingDrawType.NONE.name(), penaltyPatch.pendingDrawType());
         assertEquals(3, penaltyPatch.players().get(0).handCount());
+    }
+
+    @Test
+    void currentPlayerLeavePausesThenContinuesClockwiseAfterAllRemainingPlayersConfirm() {
+        Fixture fixture = createGame(List.of(
+                List.of(number(CardColor.RED, 1)),
+                List.of(number(CardColor.RED, 2)),
+                List.of(number(CardColor.RED, 3)),
+                List.of(number(CardColor.RED, 4))
+        ), drawPile(12));
+        Game game = gameRepository.findById(fixture.gameId()).orElseThrow();
+        game.setCurrentTurn(fixture.userId(1));
+        gameRepository.saveAndFlush(game);
+
+        gameService.leaveRoom(game.getRoom().getId(), fixture.userId(1));
+
+        Game afterLeave = gameRepository.findById(fixture.gameId()).orElseThrow();
+        List<GamePlayer> remaining = gamePlayerRepository.findByGameOrderBySeatIndexAsc(afterLeave);
+        assertEquals(List.of(fixture.userId(0), fixture.userId(2), fixture.userId(3)),
+                remaining.stream().map(player -> player.getUser().getId()).toList());
+        assertEquals(List.of(0, 1, 2), remaining.stream().map(GamePlayer::getSeatIndex).toList());
+        assertEquals(fixture.userId(2), afterLeave.getCurrentTurn());
+        assertTrue(afterLeave.isClockwise());
+        assertTrue(afterLeave.isContinuationPending());
+        assertEquals("PLAYER_LEFT_CONFIRM_REQUIRED", lastPublicPatch().type());
+        assertThrows(IllegalArgumentException.class,
+                () -> gameService.drawCard(fixture.gameId(), fixture.userId(2)));
+
+        gameService.confirmContinue(fixture.gameId(), fixture.userId(0));
+        assertTrue(gameRepository.findById(fixture.gameId()).orElseThrow().isContinuationPending());
+        gameService.confirmContinue(fixture.gameId(), fixture.userId(2));
+        assertTrue(gameRepository.findById(fixture.gameId()).orElseThrow().isContinuationPending());
+        gameService.confirmContinue(fixture.gameId(), fixture.userId(3));
+
+        Game continued = gameRepository.findById(fixture.gameId()).orElseThrow();
+        assertFalse(continued.isContinuationPending());
+        assertEquals(fixture.userId(2), continued.getCurrentTurn());
+        assertEquals("GAME_CONTINUED", lastPublicPatch().type());
+    }
+
+    @Test
+    void currentPlayerLeaveKeepsReverseDirectionAndSelectsPreviousSeat() {
+        Fixture fixture = createGame(List.of(
+                List.of(number(CardColor.RED, 1)),
+                List.of(number(CardColor.RED, 2)),
+                List.of(number(CardColor.RED, 3)),
+                List.of(number(CardColor.RED, 4))
+        ), drawPile(12));
+        Game game = gameRepository.findById(fixture.gameId()).orElseThrow();
+        game.setCurrentTurn(fixture.userId(2));
+        game.setClockwise(false);
+        gameRepository.saveAndFlush(game);
+
+        gameService.leaveRoom(game.getRoom().getId(), fixture.userId(2));
+
+        Game afterLeave = gameRepository.findById(fixture.gameId()).orElseThrow();
+        assertFalse(afterLeave.isClockwise());
+        assertEquals(fixture.userId(1), afterLeave.getCurrentTurn());
+        assertEquals(-1, lastPublicPatch().direction());
+        assertEquals(fixture.userId(1), lastPublicPatch().currentPlayerId());
+    }
+
+    @Test
+    void nonCurrentPlayerLeaveDoesNotChangeTurn() {
+        Fixture fixture = createGame(List.of(
+                List.of(number(CardColor.RED, 1)),
+                List.of(number(CardColor.RED, 2)),
+                List.of(number(CardColor.RED, 3))
+        ), drawPile(12));
+        Game game = gameRepository.findById(fixture.gameId()).orElseThrow();
+        game.setCurrentTurn(fixture.userId(1));
+        gameRepository.saveAndFlush(game);
+
+        gameService.leaveRoom(game.getRoom().getId(), fixture.userId(2));
+
+        Game afterLeave = gameRepository.findById(fixture.gameId()).orElseThrow();
+        assertEquals(fixture.userId(1), afterLeave.getCurrentTurn());
+        assertTrue(afterLeave.isContinuationPending());
+    }
+
+    @Test
+    void leaveEndsButDoesNotDeleteGameWhenFewerThanTwoPlayersRemain() {
+        Fixture fixture = createGame(List.of(
+                List.of(number(CardColor.RED, 1)),
+                List.of(number(CardColor.RED, 2))
+        ), drawPile(12));
+        Game game = gameRepository.findById(fixture.gameId()).orElseThrow();
+        Long roomId = game.getRoom().getId();
+
+        gameService.leaveRoom(roomId, fixture.userId(0));
+
+        Game ended = gameRepository.findById(fixture.gameId()).orElseThrow();
+        assertEquals(GameStatus.FINISHED, ended.getStatus());
+        assertNull(ended.getCurrentTurn());
+        assertFalse(ended.isContinuationPending());
+        assertTrue(roomRepository.findById(roomId).isPresent());
+        assertEquals(RoomStatus.CLOSED, roomRepository.findById(roomId).orElseThrow().getStatus());
+        assertEquals(List.of(fixture.userId(1)), gamePlayerRepository.findByGameOrderBySeatIndexAsc(ended)
+                .stream().map(player -> player.getUser().getId()).toList());
+        assertEquals("GAME_ENDED_PLAYER_LEFT", lastPublicPatch().type());
     }
 
     private long assertPatch(PublicGamePatch patch,

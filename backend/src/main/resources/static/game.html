@@ -157,6 +157,22 @@
             </div>
         </div>
 
+        <div v-if="continuationPending" class="modal-overlay">
+            <div class="modal-card result-card">
+                <h2>{{ t("playerLeftTitle") }}</h2>
+                <p class="result-subtitle">{{ t("playerLeftPrompt") }}</p>
+                <p class="result-status">{{ continuationReadyPlayerIds.length }} / {{ playerCount }}</p>
+                <div class="result-actions">
+                    <button class="btn-secondary" :disabled="leavingRoom" @click="returnToLobby({ force: true, notifyServer: true, skipConfirm: true })">
+                        {{ t("backToLobby") }}
+                    </button>
+                    <button class="btn-primary" :disabled="hasConfirmedContinuation || confirmingContinuation" @click="continueGameAction">
+                        {{ confirmingContinuation ? t("continuing") : (hasConfirmedContinuation ? t("waitingContinue") : t("continueGame")) }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div v-if="gameResult" class="modal-overlay">
             <div class="modal-card result-card">
                 <h2 :class="{ win: gameResult.win, lose: !gameResult.win }">{{ gameResult.title }}</h2>

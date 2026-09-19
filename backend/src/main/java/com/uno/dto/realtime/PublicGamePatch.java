@@ -27,6 +27,8 @@ public record PublicGamePatch(
         List<PublicPlayerInfo> players,
         Long winnerId,
         List<Long> rematchReadyPlayerIds,
+        Boolean continuationPending,
+        List<Long> continuationReadyPlayerIds,
         String message,
         Boolean resyncRequired
 ) {

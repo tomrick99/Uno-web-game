@@ -38,6 +38,9 @@ public class GamePlayer {
     @Column(name = "rematch_ready")
     private boolean rematchReady = false;
 
+    @Column(name = "continuation_ready")
+    private boolean continuationReady = false;
+
     @Column(name = "joined_at")
     private LocalDateTime joinedAt;
 
@@ -110,6 +113,9 @@ public class GamePlayer {
 
     public boolean isRematchReady() { return rematchReady; }
     public void setRematchReady(boolean rematchReady) { this.rematchReady = rematchReady; }
+
+    public boolean isContinuationReady() { return continuationReady; }
+    public void setContinuationReady(boolean continuationReady) { this.continuationReady = continuationReady; }
 
     public LocalDateTime getJoinedAt() { return joinedAt; }
     public void setJoinedAt(LocalDateTime joinedAt) { this.joinedAt = joinedAt; }

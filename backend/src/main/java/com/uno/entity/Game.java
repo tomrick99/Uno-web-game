@@ -41,6 +41,9 @@ public class Game {
     @Column(name = "direction")
     private boolean clockwise = true;
 
+    @Column(name = "continuation_pending")
+    private boolean continuationPending = false;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "current_color")
     private com.uno.entity.enums.CardColor currentColor;
@@ -92,6 +95,9 @@ public class Game {
 
     public boolean isClockwise() { return clockwise; }
     public void setClockwise(boolean clockwise) { this.clockwise = clockwise; }
+
+    public boolean isContinuationPending() { return continuationPending; }
+    public void setContinuationPending(boolean continuationPending) { this.continuationPending = continuationPending; }
 
     public com.uno.entity.enums.CardColor getCurrentColor() { return currentColor; }
     public void setCurrentColor(com.uno.entity.enums.CardColor currentColor) { this.currentColor = currentColor; }
