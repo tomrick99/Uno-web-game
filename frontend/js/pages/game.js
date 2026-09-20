@@ -94,6 +94,7 @@ createApp({
                 direction: "方向",
                 mode: "模式",
                 players: "玩家",
+                tablePlayersLabel: "牌桌座位",
                 cardsUnit: "张牌",
                 me: "我",
                 currentColor: "当前颜色",
@@ -178,6 +179,7 @@ createApp({
                 direction: "Direction",
                 mode: "Mode",
                 players: "Players",
+                tablePlayersLabel: "Table seats",
                 cardsUnit: "cards",
                 me: "Me",
                 currentColor: "Color",
@@ -313,7 +315,33 @@ createApp({
         );
 
         const languageLabel = computed(() => language.value === "zh" ? "EN" : "中文");
-        const directionLabel = computed(() => direction.value === 1 ? t("clockwise") : t("counterClockwise"));
+        const playDirection = computed(() => direction.value === -1 ? -1 : 1);
+        const directionLabel = computed(() => playDirection.value === 1 ? t("clockwise") : t("counterClockwise"));
+        const seatedTablePlayers = computed(() => {
+            const orderedPlayers = tablePlayers.value
+                .map((player, originalIndex) => ({
+                    ...player,
+                    seatOrder: Number.isFinite(Number(player.seatIndex)) ? Number(player.seatIndex) : originalIndex,
+                    originalIndex
+                }))
+                .sort((left, right) => left.seatOrder - right.seatOrder || left.originalIndex - right.originalIndex);
+            const myIndex = orderedPlayers.findIndex((player) => player.isMe);
+            const relativePlayers = myIndex > 0
+                ? [...orderedPlayers.slice(myIndex), ...orderedPlayers.slice(0, myIndex)]
+                : orderedPlayers;
+            const seatCount = relativePlayers.length;
+
+            return relativePlayers.map((player, index) => {
+                const angle = (90 + (index * 360 / Math.max(seatCount, 1))) * Math.PI / 180;
+                return {
+                    ...player,
+                    tablePosition: {
+                        "--seat-left": `${50 + 43 * Math.cos(angle)}%`,
+                        "--seat-top": `${50 + 42 * Math.sin(angle)}%`
+                    }
+                };
+            });
+        });
         const gameModeLabel = computed(() => gameMode.value === "NO_MERCY" ? "No Mercy" : t("classic"));
         const colorName = (color) => {
             if (color === "RED") return t("red");
@@ -1079,8 +1107,13 @@ createApp({
                 gameStatus.value = String(gameState.status ?? gameState.phase).toUpperCase();
             }
             if (hasOwnField(gameState, "currentTurn")) currentTurn.value = gameState.currentTurn;
-            if (hasOwnField(gameState, "clockwise")) clockwise.value = gameState.clockwise !== false;
-            if (hasOwnField(gameState, "direction")) direction.value = Number(gameState.direction);
+            if (hasOwnField(gameState, "direction")) {
+                direction.value = Number(gameState.direction) === -1 ? -1 : 1;
+                clockwise.value = direction.value === 1;
+            } else if (hasOwnField(gameState, "clockwise")) {
+                clockwise.value = gameState.clockwise !== false;
+                direction.value = clockwise.value ? 1 : -1;
+            }
             if (hasOwnField(gameState, "currentColor") && gameState.currentColor != null) currentColor.value = gameState.currentColor;
             if (hasOwnField(gameState, "pendingDrawCount")) pendingDrawCount.value = Number(gameState.pendingDrawCount ?? 0);
             if (hasOwnField(gameState, "pendingDrawType")) pendingDrawType.value = gameState.pendingDrawType ?? "NONE";
@@ -1850,6 +1883,7 @@ createApp({
             topCard,
             handCards,
             tablePlayers,
+            seatedTablePlayers,
             opponents,
             playerCount,
             isMyTurn,
@@ -1879,6 +1913,7 @@ createApp({
             showDrawPenaltyButton,
             penaltyNoticeText,
             drawPenaltyButtonText,
+            playDirection,
             directionLabel,
             currentColorLabel,
             gameModeLabel,

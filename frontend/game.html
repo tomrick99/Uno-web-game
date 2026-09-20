@@ -51,46 +51,63 @@
             </div>
         </header>
 
-        <section class="players-area">
-            <div
-                v-for="player in tablePlayers"
-                :key="player.userId"
-                class="table-player"
-                :class="{ 'current-turn': player.isCurrentTurn, me: player.isMe }"
-            >
-                <div class="opponent-avatar">{{ player.username.charAt(0).toUpperCase() }}</div>
-                <div class="player-info">
-                    <div class="opponent-name">{{ player.username }}<span v-if="player.isMe"> · {{ t("me") }}</span></div>
-                    <div class="player-meta">{{ player.handCount }} {{ t("cardsUnit") }}</div>
+        <main class="table-stage">
+            <section class="players-area" :aria-label="t('tablePlayersLabel')">
+                <div
+                    v-for="player in seatedTablePlayers"
+                    :key="player.userId"
+                    class="table-player"
+                    :class="{ 'current-turn': player.isCurrentTurn, me: player.isMe }"
+                    :style="player.tablePosition"
+                >
+                    <div class="opponent-avatar">{{ player.username.charAt(0).toUpperCase() }}</div>
+                    <div class="player-info">
+                        <div class="opponent-name">{{ player.username }}<span v-if="player.isMe"> · {{ t("me") }}</span></div>
+                        <div class="player-meta">{{ player.handCount }} {{ t("cardsUnit") }}</div>
+                    </div>
+                    <div class="uno-badge" v-if="player.saidUno">UNO!</div>
                 </div>
-                <div class="uno-badge" v-if="player.saidUno">UNO!</div>
-            </div>
-        </section>
+            </section>
 
-        <section class="game-center">
-            <div
-                class="draw-pile"
-                :class="{ disabled: !canDraw || drawingCard }"
-                :title="drawingCard ? t('drawing') : (canDraw ? t('canDraw') : t('cannotDraw'))"
-                @click="drawCardAction"
-            >
-                <div class="card card-back draw-card">
-                    <div class="card-back-design">UNO</div>
-                    <div class="draw-count">{{ drawPileSize }}</div>
-                </div>
-                <div class="pile-label">{{ drawingCard ? t("drawing") : (canDraw ? t("clickDraw") : t("drawPile")) }}</div>
-            </div>
+            <div class="table-surface">
+                <section class="game-center">
+                    <div
+                        :key="`direction-${playDirection}`"
+                        class="play-direction"
+                        :class="{ 'counter-clockwise': playDirection === -1 }"
+                        role="status"
+                        aria-live="polite"
+                        :aria-label="`${t('direction')}: ${directionLabel}`"
+                    >
+                        <span class="direction-arrow" aria-hidden="true">{{ playDirection === 1 ? "↻" : "↺" }}</span>
+                        <span class="direction-text">{{ directionLabel }}</span>
+                    </div>
 
-            <div class="discard-pile">
-                <div v-if="topCard" class="card" :class="[topCard.color.toLowerCase(), 'large']">
-                    <div class="card-corner top-left">{{ topCard.display }}</div>
-                    <div class="card-center">{{ topCard.display }}</div>
-                    <div class="card-corner bottom-right">{{ topCard.display }}</div>
-                </div>
-                <div v-else class="card-placeholder">{{ t("waitingStart") }}</div>
-                <div class="pile-label">{{ t("discardPile") }}</div>
+                    <div
+                        class="draw-pile"
+                        :class="{ disabled: !canDraw || drawingCard }"
+                        :title="drawingCard ? t('drawing') : (canDraw ? t('canDraw') : t('cannotDraw'))"
+                        @click="drawCardAction"
+                    >
+                        <div class="card card-back draw-card">
+                            <div class="card-back-design">UNO</div>
+                            <div class="draw-count">{{ drawPileSize }}</div>
+                        </div>
+                        <div class="pile-label">{{ drawingCard ? t("drawing") : (canDraw ? t("clickDraw") : t("drawPile")) }}</div>
+                    </div>
+
+                    <div class="discard-pile">
+                        <div v-if="topCard" class="card" :class="[topCard.color.toLowerCase(), 'large']">
+                            <div class="card-corner top-left">{{ topCard.display }}</div>
+                            <div class="card-center">{{ topCard.display }}</div>
+                            <div class="card-corner bottom-right">{{ topCard.display }}</div>
+                        </div>
+                        <div v-else class="card-placeholder">{{ t("waitingStart") }}</div>
+                        <div class="pile-label">{{ t("discardPile") }}</div>
+                    </div>
+                </section>
             </div>
-        </section>
+        </main>
 
         <aside class="game-help-panel" :class="{ expanded: rulesExpanded }">
             <div class="rules-toggle" @click="rulesExpanded = !rulesExpanded">{{ t("rules") }}</div>
