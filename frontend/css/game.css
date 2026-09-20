@@ -125,8 +125,22 @@
     background: rgba(255, 255, 255, 0.18);
 }
 
-/* 对手区域 */
-.players-area,
+/* 牌桌与环绕座位 */
+.table-stage {
+    position: relative;
+    z-index: 1;
+    width: min(1180px, calc(100% - 32px));
+    height: 560px;
+    margin: 10px auto 0;
+}
+
+.players-area {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+}
+
 .opponents-area {
     position: relative;
     z-index: 1;
@@ -152,13 +166,39 @@
     transition: all 0.3s;
 }
 
+.table-player {
+    position: absolute;
+    width: clamp(150px, 17vw, 205px);
+    box-sizing: border-box;
+    transform: translate(-50%, -50%);
+    pointer-events: auto;
+    background: rgba(24, 24, 50, 0.94);
+    border-color: rgba(255, 255, 255, 0.14);
+    box-shadow: 0 5px 16px rgba(0, 0, 0, 0.24);
+    backdrop-filter: blur(8px);
+}
+
+.table-player.seat-slot-0 { left: 50%; top: 92%; }
+.table-player.seat-slot-1 { left: 25%; top: 84%; }
+.table-player.seat-slot-2 { left: 10%; top: 58%; }
+.table-player.seat-slot-3 { left: 23%; top: 15%; }
+.table-player.seat-slot-4 { left: 50%; top: 8%; }
+.table-player.seat-slot-5 { left: 77%; top: 15%; }
+.table-player.seat-slot-6 { left: 90%; top: 58%; }
+.table-player.seat-slot-7 { left: 75%; top: 84%; }
+
 .table-player.current-turn,
 .opponent.current-turn {
     border-color: var(--yellow);
     box-shadow: 0 0 20px rgba(243, 156, 18, 0.5);
 }
 
-.table-player.me {
+.table-player.me:not(.current-turn) {
+    background: rgba(52, 152, 219, 0.12);
+    border-color: rgba(52, 152, 219, 0.65);
+}
+
+.table-player.me.current-turn {
     background: rgba(52, 152, 219, 0.12);
 }
 
@@ -229,6 +269,64 @@
 }
 
 /* 中央游戏区 */
+.table-surface {
+    position: absolute;
+    inset: 17% 18% 18%;
+    z-index: 1;
+    border: 2px solid rgba(255, 255, 255, 0.13);
+    border-radius: 50%;
+    background:
+        radial-gradient(circle at center, rgba(52, 152, 219, 0.12), rgba(15, 52, 96, 0.18) 55%, rgba(0, 0, 0, 0.35)),
+        rgba(0, 0, 0, 0.18);
+    box-shadow: inset 0 0 45px rgba(0, 0, 0, 0.35), 0 12px 35px rgba(0, 0, 0, 0.25);
+}
+
+.direction-indicator {
+    position: absolute;
+    top: 16px;
+    left: 50%;
+    z-index: 4;
+    transform: translateX(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 122px;
+    justify-content: center;
+    padding: 7px 13px;
+    border: 1px solid rgba(243, 156, 18, 0.65);
+    border-radius: 999px;
+    color: var(--yellow);
+    background: rgba(12, 12, 30, 0.9);
+    box-shadow: 0 0 16px rgba(243, 156, 18, 0.24);
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.direction-arrow {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    font-size: 25px;
+    line-height: 1;
+    animation: direction-spin-clockwise 5s linear infinite;
+}
+
+.direction-indicator.counter-clockwise .direction-arrow {
+    animation-name: direction-spin-counter-clockwise;
+}
+
+@keyframes direction-spin-clockwise {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+@keyframes direction-spin-counter-clockwise {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(-360deg); }
+}
+
 .game-center {
     position: relative;
     z-index: 1;
@@ -236,8 +334,10 @@
     justify-content: center;
     align-items: center;
     gap: 80px;
-    padding: 20px;
-    min-height: 250px;
+    box-sizing: border-box;
+    height: 100%;
+    min-height: 0;
+    padding: 54px 20px 20px;
 }
 
 .draw-pile, .discard-pile {
@@ -817,9 +917,75 @@
         justify-content: center;
     }
 
+    .table-stage {
+        width: 100%;
+        height: 640px;
+        margin-top: 6px;
+    }
+
+    .table-surface {
+        inset: 29% 25% 25%;
+    }
+
+    .table-player {
+        width: 104px;
+        min-width: 0;
+        padding: 8px;
+        gap: 6px;
+        border-radius: 10px;
+    }
+
+    .table-player.seat-slot-0 { left: 50%; top: 94%; }
+    .table-player.seat-slot-1 { left: 24%; top: 84%; }
+    .table-player.seat-slot-2 { left: 14%; top: 61%; }
+    .table-player.seat-slot-3 { left: 24%; top: 17%; }
+    .table-player.seat-slot-4 { left: 50%; top: 8%; }
+    .table-player.seat-slot-5 { left: 76%; top: 17%; }
+    .table-player.seat-slot-6 { left: 86%; top: 61%; }
+    .table-player.seat-slot-7 { left: 76%; top: 84%; }
+
+    .table-player .opponent-avatar {
+        width: 32px;
+        height: 32px;
+        flex: 0 0 32px;
+        font-size: 15px;
+    }
+
+    .table-player .opponent-name {
+        font-size: 12px;
+    }
+
+    .table-player .player-meta {
+        font-size: 10px;
+    }
+
+    .table-player .uno-badge {
+        position: absolute;
+        top: -9px;
+        right: -5px;
+        padding: 2px 6px;
+        font-size: 9px;
+    }
+
     .game-center {
-        gap: 28px;
-        min-height: 220px;
+        gap: 18px;
+        min-height: 0;
+        padding: 58px 8px 14px;
+    }
+
+    .direction-indicator {
+        top: 12px;
+    }
+
+    .table-surface .card.draw-card {
+        width: 70px;
+        height: 105px;
+    }
+
+    .table-surface .card.large,
+    .table-surface .card-placeholder {
+        width: 76px;
+        height: 114px;
     }
 
     .game-help-panel {
@@ -861,5 +1027,11 @@
 
     .action-buttons .btn-play {
         width: min(100%, 420px);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .direction-arrow {
+        animation: none;
     }
 }

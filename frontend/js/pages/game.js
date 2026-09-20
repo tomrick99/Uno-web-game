@@ -311,9 +311,31 @@ createApp({
         const playerCount = computed(() =>
             Number(roomPlayerCount.value || tablePlayers.value.length || opponents.value.length + 1)
         );
+        const seatSlotsByCount = {
+            1: [0],
+            2: [0, 4],
+            3: [0, 3, 5],
+            4: [0, 2, 4, 6],
+            5: [0, 2, 3, 5, 6],
+            6: [0, 1, 3, 4, 5, 7],
+            7: [0, 1, 2, 3, 5, 6, 7],
+            8: [0, 1, 2, 3, 4, 5, 6, 7]
+        };
+        const orderedTablePlayers = computed(() => {
+            const players = [...tablePlayers.value].sort((first, second) =>
+                Number(first.seatIndex ?? Number.MAX_SAFE_INTEGER) - Number(second.seatIndex ?? Number.MAX_SAFE_INTEGER)
+            );
+            const myIndex = players.findIndex((player) => player.isMe);
+            return myIndex > 0 ? [...players.slice(myIndex), ...players.slice(0, myIndex)] : players;
+        });
+        const getPlayerSeatClass = (index) => {
+            const slots = seatSlotsByCount[orderedTablePlayers.value.length] || seatSlotsByCount[8];
+            return `seat-slot-${slots[index] ?? index % 8}`;
+        };
 
         const languageLabel = computed(() => language.value === "zh" ? "EN" : "中文");
         const directionLabel = computed(() => direction.value === 1 ? t("clockwise") : t("counterClockwise"));
+        const directionArrow = computed(() => direction.value === 1 ? "↻" : "↺");
         const gameModeLabel = computed(() => gameMode.value === "NO_MERCY" ? "No Mercy" : t("classic"));
         const colorName = (color) => {
             if (color === "RED") return t("red");
@@ -1080,7 +1102,12 @@ createApp({
             }
             if (hasOwnField(gameState, "currentTurn")) currentTurn.value = gameState.currentTurn;
             if (hasOwnField(gameState, "clockwise")) clockwise.value = gameState.clockwise !== false;
-            if (hasOwnField(gameState, "direction")) direction.value = Number(gameState.direction);
+            if (hasOwnField(gameState, "direction")) {
+                direction.value = Number(gameState.direction) === -1 ? -1 : 1;
+                clockwise.value = direction.value === 1;
+            } else if (hasOwnField(gameState, "clockwise")) {
+                direction.value = clockwise.value ? 1 : -1;
+            }
             if (hasOwnField(gameState, "currentColor") && gameState.currentColor != null) currentColor.value = gameState.currentColor;
             if (hasOwnField(gameState, "pendingDrawCount")) pendingDrawCount.value = Number(gameState.pendingDrawCount ?? 0);
             if (hasOwnField(gameState, "pendingDrawType")) pendingDrawType.value = gameState.pendingDrawType ?? "NONE";
@@ -1851,6 +1878,7 @@ createApp({
             handCards,
             tablePlayers,
             opponents,
+            orderedTablePlayers,
             playerCount,
             isMyTurn,
             turnLabel,
@@ -1880,6 +1908,7 @@ createApp({
             penaltyNoticeText,
             drawPenaltyButtonText,
             directionLabel,
+            directionArrow,
             currentColorLabel,
             gameModeLabel,
             connectionLabel,
@@ -1889,6 +1918,7 @@ createApp({
             t,
             toggleLanguage,
             colorName,
+            getPlayerSeatClass,
             showToastMessage,
             selectCard,
             pickColor,
