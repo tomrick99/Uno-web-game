@@ -125,6 +125,8 @@ createApp({
                 playable: "可以出",
                 notPlayable: "不能出",
                 chooseColor: "请选择颜色后再出牌。",
+                colorSelectionTitle: "选择黑色牌颜色",
+                colorSelected: "已选择：{color}。确认出牌前可以更改。",
                 gameNotPlaying: "游戏尚未开始",
                 notYourTurn: "还没轮到你",
                 yourTurn: "你的回合",
@@ -207,6 +209,8 @@ createApp({
                 playable: "Playable",
                 notPlayable: "Not playable",
                 chooseColor: "Choose a color before playing.",
+                colorSelectionTitle: "Choose a wild-card color",
+                colorSelected: "Selected: {color}. You can change it before playing.",
                 gameNotPlaying: "Game is not playing",
                 notYourTurn: "Not your turn",
                 yourTurn: "Your turn",
@@ -281,6 +285,7 @@ createApp({
             "WILD_DRAW_TEN",
             "WILD_REVERSE_DRAW_FOUR"
         ]);
+        const selectableColors = new Set(["RED", "BLUE", "GREEN", "YELLOW"]);
         const drawPenaltyTypes = new Set([
             "DRAW_TWO",
             "DRAW_FOUR",
@@ -1645,10 +1650,11 @@ createApp({
             }
             selectedCard.value = index;
             needsColorPick.value = isWildType(card.type);
-            if (!needsColorPick.value) chosenColor.value = "";
+            chosenColor.value = "";
         };
 
         const pickColor = (color) => {
+            if (!needsColorPick.value || !selectableColors.has(color)) return;
             chosenColor.value = color;
         };
 

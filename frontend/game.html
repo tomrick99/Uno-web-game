@@ -127,13 +127,47 @@
             </div>
 
             <div class="action-buttons" v-if="selectedCard !== null">
-                <button id="playSelectedCardButton" class="btn-play" :disabled="!canPlaySelected || playingCard" @click="playSelectedCard">
+                <div
+                    v-if="needsColorPick"
+                    class="wild-color-picker"
+                    :class="{ selected: chosenColor }"
+                    role="group"
+                    :aria-label="t('colorSelectionTitle')"
+                >
+                    <div class="color-picker-title">{{ t("colorSelectionTitle") }}</div>
+                    <div
+                        id="wildColorSelectionStatus"
+                        class="color-picker-status"
+                        :class="{ pending: !chosenColor }"
+                        aria-live="polite"
+                    >
+                        {{ chosenColor ? t("colorSelected", { color: colorName(chosenColor) }) : t("chooseColor") }}
+                    </div>
+                    <div class="wild-color-options">
+                        <button type="button" class="btn-color-pick red" :class="{ selected: chosenColor === 'RED' }" :aria-pressed="chosenColor === 'RED'" @click="pickColor('RED')">
+                            <span>{{ colorName("RED") }}</span>
+                        </button>
+                        <button type="button" class="btn-color-pick blue" :class="{ selected: chosenColor === 'BLUE' }" :aria-pressed="chosenColor === 'BLUE'" @click="pickColor('BLUE')">
+                            <span>{{ colorName("BLUE") }}</span>
+                        </button>
+                        <button type="button" class="btn-color-pick green" :class="{ selected: chosenColor === 'GREEN' }" :aria-pressed="chosenColor === 'GREEN'" @click="pickColor('GREEN')">
+                            <span>{{ colorName("GREEN") }}</span>
+                        </button>
+                        <button type="button" class="btn-color-pick yellow" :class="{ selected: chosenColor === 'YELLOW' }" :aria-pressed="chosenColor === 'YELLOW'" @click="pickColor('YELLOW')">
+                            <span>{{ colorName("YELLOW") }}</span>
+                        </button>
+                    </div>
+                </div>
+                <button
+                    id="playSelectedCardButton"
+                    type="button"
+                    class="btn-play"
+                    :disabled="!canPlaySelected || playingCard"
+                    :aria-describedby="needsColorPick ? 'wildColorSelectionStatus' : null"
+                    @click="playSelectedCard"
+                >
                     {{ playingCard ? t("playing") : t("playCard") }}
                 </button>
-                <button v-if="needsColorPick" class="btn-color-pick" @click="pickColor('RED')">{{ colorName("RED") }}</button>
-                <button v-if="needsColorPick" class="btn-color-pick blue" @click="pickColor('BLUE')">{{ colorName("BLUE") }}</button>
-                <button v-if="needsColorPick" class="btn-color-pick green" @click="pickColor('GREEN')">{{ colorName("GREEN") }}</button>
-                <button v-if="needsColorPick" class="btn-color-pick yellow" @click="pickColor('YELLOW')">{{ colorName("YELLOW") }}</button>
             </div>
 
             <div v-if="showPenaltyNotice" class="penalty-panel">
