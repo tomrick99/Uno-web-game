@@ -4,6 +4,7 @@ import com.uno.dto.request.CreateRoomRequest;
 import com.uno.dto.response.ApiResponse;
 import com.uno.entity.Room;
 import com.uno.entity.User;
+import com.uno.entity.enums.DrawPileRule;
 import com.uno.entity.enums.GameMode;
 import com.uno.entity.enums.RoomStatus;
 import com.uno.service.GameService;
@@ -57,6 +58,7 @@ class RoomControllerTest {
         request.setTotalRounds(8);
         request.setRoundTimeLimitMinutes(10);
         request.setGameMode(GameMode.CLASSIC);
+        request.setDrawPileRule(DrawPileRule.AUTO_REFILL);
 
         ApiResponse<Map<String, Object>> response = controller.createRoom(request, session);
 
@@ -67,11 +69,13 @@ class RoomControllerTest {
         assertTrue(wsService.lobbyBroadcasted);
         assertEquals("ROOM_CREATED", wsService.lastEvent);
         assertEquals(roomState, wsService.lastRoomState);
+        assertEquals(DrawPileRule.AUTO_REFILL, roomService.createdDrawPileRule);
     }
 
     private static final class FakeRoomService extends RoomService {
         private final Room room;
         private final Map<String, Object> roomState;
+        private DrawPileRule createdDrawPileRule;
 
         private FakeRoomService(Room room, Map<String, Object> roomState) {
             super(null, null, null);
@@ -80,7 +84,13 @@ class RoomControllerTest {
         }
 
         @Override
-        public Room createRoom(User host, int maxPlayers, int totalRounds, int roundTimeLimitMinutes, GameMode gameMode) {
+        public Room createRoom(User host,
+                               int maxPlayers,
+                               int totalRounds,
+                               int roundTimeLimitMinutes,
+                               GameMode gameMode,
+                               DrawPileRule drawPileRule) {
+            createdDrawPileRule = drawPileRule;
             return room;
         }
 

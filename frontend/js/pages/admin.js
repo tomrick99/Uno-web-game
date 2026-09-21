@@ -17,7 +17,8 @@ createApp({
         const editForm = reactive({
             maxPlayers: 2,
             roundTimeLimitMinutes: 10,
-            gameMode: "CLASSIC"
+            gameMode: "CLASSIC",
+            drawPileRule: "AUTO_REFILL"
         });
         let refreshTimer = null;
 
@@ -65,6 +66,7 @@ createApp({
         };
 
         const modeLabel = (mode) => mode === "NO_MERCY" ? "No Mercy" : "经典";
+        const drawPileRuleLabel = (rule) => rule === "FINITE_DRAW_PILE" ? "有限抽牌堆" : "自动补充";
 
         const loadRooms = async () => {
             try {
@@ -95,6 +97,7 @@ createApp({
             editForm.maxPlayers = Number(room.maxPlayers || 2);
             editForm.roundTimeLimitMinutes = Number(room.roundTimeLimitMinutes || 10);
             editForm.gameMode = room.gameMode || "CLASSIC";
+            editForm.drawPileRule = room.drawPileRule || "AUTO_REFILL";
             showEdit.value = true;
         };
 
@@ -112,7 +115,8 @@ createApp({
                 const res = await axios.put(`${apiBase}/admin/rooms/${editingRoom.value.roomId}`, {
                     maxPlayers: editForm.maxPlayers,
                     roundTimeLimitMinutes: editForm.roundTimeLimitMinutes,
-                    gameMode: editForm.gameMode
+                    gameMode: editForm.gameMode,
+                    drawPileRule: editForm.gameMode === "NO_MERCY" ? editForm.drawPileRule : "AUTO_REFILL"
                 });
                 if (res.data.code === 200) {
                     closeEditRoom();
@@ -205,6 +209,7 @@ createApp({
             formatTime,
             statusLabel,
             modeLabel,
+            drawPileRuleLabel,
             loadRooms,
             openEditRoom,
             closeEditRoom,

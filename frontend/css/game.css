@@ -1091,6 +1091,34 @@
     font-size: 14px;
 }
 
+.result-reason {
+    margin: -10px 0 18px;
+    color: #f6c453;
+    line-height: 1.5;
+}
+
+.result-standings {
+    display: grid;
+    gap: 8px;
+    margin: 0 0 20px;
+    padding: 0;
+    list-style: none;
+    text-align: left;
+}
+
+.result-standings li {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.result-standings li.me {
+    outline: 1px solid var(--green);
+}
+
 .result-actions {
     display: flex;
     justify-content: center;

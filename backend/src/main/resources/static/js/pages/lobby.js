@@ -12,6 +12,7 @@ createApp({
         const maxPlayers = ref(2);
         const roundTimeLimitMinutes = ref(10);
         const gameMode = ref("CLASSIC");
+        const drawPileRule = ref("AUTO_REFILL");
         const language = ref(localStorage.getItem("unoLanguage") || "zh");
         const errorMsg = ref("");
         const infoMsg = ref("");
@@ -53,6 +54,12 @@ createApp({
                 failedCreateRoom: "创建房间失败",
                 failedJoinRoom: "加入房间失败",
                 classic: "经典",
+                drawPileRule: "抽牌堆耗尽规则",
+                autoRefill: "自动补充",
+                autoRefillDescription: "抽牌堆耗尽后，用弃牌堆重新补充并继续游戏。",
+                autoRefillWarning: "提示：此模式可能导致更长的游戏时间。",
+                finiteDrawPile: "有限抽牌堆",
+                finiteDrawPileDescription: "抽牌堆耗尽后立即结束游戏，手牌更少的玩家排名更高。",
                 connected: "实时已连接",
                 reconnecting: "正在重连",
                 fallback: "实时断开，轮询中",
@@ -81,6 +88,12 @@ createApp({
                 failedCreateRoom: "Failed to create room",
                 failedJoinRoom: "Failed to join room",
                 classic: "Classic",
+                drawPileRule: "Draw-pile exhaustion rule",
+                autoRefill: "Auto Refill",
+                autoRefillDescription: "When the draw pile runs out, refill it from the discard pile and keep playing.",
+                autoRefillWarning: "Note: this mode may lead to longer games.",
+                finiteDrawPile: "Finite Draw Pile",
+                finiteDrawPileDescription: "End the game when the draw pile runs out; fewer remaining cards means a better result.",
                 connected: "Realtime connected",
                 reconnecting: "Reconnecting",
                 fallback: "Fallback polling",
@@ -98,6 +111,20 @@ createApp({
         const modeOptions = computed(() => [
             { value: "CLASSIC", label: modeLabel("CLASSIC") },
             { value: "NO_MERCY", label: modeLabel("NO_MERCY") }
+        ]);
+        const drawPileRuleLabel = (rule) => rule === "FINITE_DRAW_PILE" ? t("finiteDrawPile") : t("autoRefill");
+        const drawPileRuleOptions = computed(() => [
+            {
+                value: "AUTO_REFILL",
+                label: t("autoRefill"),
+                description: t("autoRefillDescription"),
+                warning: t("autoRefillWarning")
+            },
+            {
+                value: "FINITE_DRAW_PILE",
+                label: t("finiteDrawPile"),
+                description: t("finiteDrawPileDescription")
+            }
         ]);
         const connectionLabel = computed(() => t(connectionMode.value));
 
@@ -381,7 +408,8 @@ createApp({
                 const payload = {
                     maxPlayers: maxPlayers.value,
                     roundTimeLimitMinutes: roundTimeLimitMinutes.value,
-                    gameMode: gameMode.value
+                    gameMode: gameMode.value,
+                    drawPileRule: gameMode.value === "NO_MERCY" ? drawPileRule.value : "AUTO_REFILL"
                 };
                 const res = await axios.post(`${apiBase}/room/create`, payload);
                 console.info("[UNO-LOBBY] create room response", res.data);
@@ -479,6 +507,7 @@ createApp({
             maxPlayers,
             roundTimeLimitMinutes,
             gameMode,
+            drawPileRule,
             language,
             errorMsg,
             infoMsg,
@@ -490,9 +519,11 @@ createApp({
             languageLabel,
             toggleLanguage,
             modeLabel,
+            drawPileRuleLabel,
             playerOptions,
             timeOptions,
             modeOptions,
+            drawPileRuleOptions,
             createRoom,
             joinRoom,
             goToAdmin,

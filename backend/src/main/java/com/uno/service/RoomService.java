@@ -4,6 +4,7 @@ import com.uno.entity.Game;
 import com.uno.entity.GamePlayer;
 import com.uno.entity.Room;
 import com.uno.entity.User;
+import com.uno.entity.enums.DrawPileRule;
 import com.uno.entity.enums.GameMode;
 import com.uno.entity.enums.RoomStatus;
 import com.uno.repository.GamePlayerRepository;
@@ -40,6 +41,15 @@ public class RoomService {
     }
 
     public Room createRoom(User host, int maxPlayers, int totalRounds, int roundTimeLimitMinutes, GameMode gameMode) {
+        return createRoom(host, maxPlayers, totalRounds, roundTimeLimitMinutes, gameMode, DrawPileRule.AUTO_REFILL);
+    }
+
+    public Room createRoom(User host,
+                           int maxPlayers,
+                           int totalRounds,
+                           int roundTimeLimitMinutes,
+                           GameMode gameMode,
+                           DrawPileRule drawPileRule) {
         validateRoomConfig(maxPlayers, totalRounds, roundTimeLimitMinutes, gameMode);
         Room room = new Room();
         room.setHost(host);
@@ -47,6 +57,7 @@ public class RoomService {
         room.setTotalRounds(totalRounds);
         room.setRoundTimeLimitMinutes(roundTimeLimitMinutes);
         room.setGameMode(gameMode == null ? GameMode.CLASSIC : gameMode);
+        room.setDrawPileRule(normalizeDrawPileRule(gameMode, drawPileRule));
         room.setStatus(RoomStatus.WAITING);
         return roomRepository.save(room);
     }
@@ -56,6 +67,21 @@ public class RoomService {
                                                        int totalRounds,
                                                        int roundTimeLimitMinutes,
                                                        GameMode gameMode) {
+        return updateRoomConfigByAdmin(
+                roomId,
+                maxPlayers,
+                totalRounds,
+                roundTimeLimitMinutes,
+                gameMode,
+                DrawPileRule.AUTO_REFILL);
+    }
+
+    public Map<String, Object> updateRoomConfigByAdmin(Long roomId,
+                                                       int maxPlayers,
+                                                       int totalRounds,
+                                                       int roundTimeLimitMinutes,
+                                                       GameMode gameMode,
+                                                       DrawPileRule drawPileRule) {
         validateRoomConfig(maxPlayers, totalRounds, roundTimeLimitMinutes, gameMode);
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new IllegalArgumentException("Room does not exist: " + roomId));
@@ -72,7 +98,15 @@ public class RoomService {
         room.setTotalRounds(totalRounds);
         room.setRoundTimeLimitMinutes(roundTimeLimitMinutes);
         room.setGameMode(gameMode == null ? GameMode.CLASSIC : gameMode);
+        room.setDrawPileRule(normalizeDrawPileRule(gameMode, drawPileRule));
         return getRoomState(roomRepository.save(room));
+    }
+
+    private DrawPileRule normalizeDrawPileRule(GameMode gameMode, DrawPileRule drawPileRule) {
+        if (gameMode != GameMode.NO_MERCY || drawPileRule == null) {
+            return DrawPileRule.AUTO_REFILL;
+        }
+        return drawPileRule;
     }
 
     private void validateRoomConfig(int maxPlayers, int totalRounds, int roundTimeLimitMinutes, GameMode gameMode) {
@@ -173,6 +207,9 @@ public class RoomService {
             state.put("totalRounds", room.getTotalRounds());
             state.put("roundTimeLimitMinutes", room.getRoundTimeLimitMinutes());
             state.put("gameMode", room.getGameMode() == null ? GameMode.CLASSIC.name() : room.getGameMode().name());
+            state.put("drawPileRule", room.getDrawPileRule() == null
+                    ? DrawPileRule.AUTO_REFILL.name()
+                    : room.getDrawPileRule().name());
             state.put("createdAt", room.getCreatedAt());
             state.put("version", room.getCreatedAt() != null
                     ? room.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()

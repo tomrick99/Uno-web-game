@@ -65,7 +65,8 @@ public class RoomController {
                     safeRequest.getMaxPlayers(),
                     safeRequest.getTotalRounds(),
                     safeRequest.getRoundTimeLimitMinutes(),
-                    safeRequest.getGameMode());
+                    safeRequest.getGameMode(),
+                    safeRequest.getDrawPileRule());
             gameService.joinGame(room.getId(), user.getId());
             Map<String, Object> roomState = roomService.getRoomState(room.getId());
             wsService.broadcastLobbyRoomState(roomState, "ROOM_CREATED", "Room created");

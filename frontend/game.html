@@ -37,6 +37,10 @@
                     <span class="status-label">{{ t("mode") }}</span>
                     <span>{{ gameModeLabel }}</span>
                 </div>
+                <div v-if="gameMode === 'NO_MERCY'" class="status-chip">
+                    <span class="status-label">{{ t("drawPileRule") }}</span>
+                    <span>{{ drawPileRuleLabel }}</span>
+                </div>
                 <div class="status-chip">
                     <span class="status-label">{{ t("players") }}</span>
                     <span>{{ playerCount }}/{{ maxPlayers }}</span>
@@ -245,6 +249,13 @@
                 <p class="result-subtitle">
                     {{ gameResult.win ? t("winSubtitle") : t("loseSubtitle") }}
                 </p>
+                <p v-if="gameResult.reasonText" class="result-reason">{{ gameResult.reasonText }}</p>
+                <ol v-if="gameResult.standings.length" class="result-standings">
+                    <li v-for="player in gameResult.standings" :key="player.userId" :class="{ me: player.isMe }">
+                        <span>#{{ player.rank }} · {{ player.username }}</span>
+                        <span>{{ t("resultCards", { count: player.handCount }) }}</span>
+                    </li>
+                </ol>
                 <p v-if="gameResult.statusText" class="result-status">{{ gameResult.statusText }}</p>
                 <div class="result-actions">
                     <button id="endReturnLobbyBtn" class="btn-secondary">{{ t("backToLobby") }}</button>

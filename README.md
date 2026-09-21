@@ -104,13 +104,14 @@ The project uses Hibernate `ddl-auto=update`, so local schema changes are usuall
 
 Legacy room configuration columns may remain in existing databases for compatibility. The current UI no longer exposes round-count configuration.
 
-If an existing online database was created before No Mercy was added, verify that the `room` table has these columns:
+If an existing online database predates the current No Mercy room options, verify that the `room` table has these columns:
 
 ```sql
 ALTER TABLE room
 ADD COLUMN total_rounds INT DEFAULT 8,
 ADD COLUMN round_time_limit_minutes INT DEFAULT 10,
-ADD COLUMN game_mode VARCHAR(50) DEFAULT 'CLASSIC';
+ADD COLUMN game_mode VARCHAR(50) DEFAULT 'CLASSIC',
+ADD COLUMN draw_pile_rule VARCHAR(50) DEFAULT 'AUTO_REFILL';
 ```
 
 `max_players` already existed in earlier versions; this version validates it as 2-8 players.

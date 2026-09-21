@@ -15,6 +15,7 @@ createApp({
         const maxPlayers = ref(2);
         const roundTimeLimitMinutes = ref(10);
         const gameMode = ref("CLASSIC");
+        const drawPileRule = ref("AUTO_REFILL");
         const userId = ref(localStorage.getItem("userId"));
         const username = ref(localStorage.getItem("username") || "");
 
@@ -118,6 +119,14 @@ createApp({
                 clockwise: "顺时针",
                 counterClockwise: "逆时针",
                 classic: "经典",
+                drawPileRule: "抽牌规则",
+                autoRefill: "自动补充",
+                finiteDrawPile: "有限抽牌堆",
+                autoRefillRule: "抽牌堆耗尽后会用弃牌堆补充；此模式可能导致更长的游戏时间。",
+                finiteDrawPileRule: "抽牌堆耗尽后立即结束游戏，并按剩余手牌数排名。",
+                drawPileExhausted: "抽牌堆已耗尽，按剩余手牌数结算。",
+                tiedWinners: "并列获胜：{names}",
+                resultCards: "剩余 {count} 张",
                 red: "红",
                 yellow: "黄",
                 green: "绿",
@@ -202,6 +211,14 @@ createApp({
                 clockwise: "Clockwise",
                 counterClockwise: "Counter-clockwise",
                 classic: "Classic",
+                drawPileRule: "Draw rule",
+                autoRefill: "Auto Refill",
+                finiteDrawPile: "Finite Draw Pile",
+                autoRefillRule: "Refill from the discard pile when empty; this mode may lead to longer games.",
+                finiteDrawPileRule: "End when the draw pile is exhausted and rank players by remaining cards.",
+                drawPileExhausted: "The draw pile is exhausted. Results are based on remaining cards.",
+                tiedWinners: "Joint winners: {names}",
+                resultCards: "{count} cards left",
                 red: "Red",
                 yellow: "Yellow",
                 green: "Green",
@@ -337,6 +354,7 @@ createApp({
         const directionLabel = computed(() => direction.value === 1 ? t("clockwise") : t("counterClockwise"));
         const directionArrow = computed(() => direction.value === 1 ? "↻" : "↺");
         const gameModeLabel = computed(() => gameMode.value === "NO_MERCY" ? "No Mercy" : t("classic"));
+        const drawPileRuleLabel = computed(() => drawPileRule.value === "FINITE_DRAW_PILE" ? t("finiteDrawPile") : t("autoRefill"));
         const colorName = (color) => {
             if (color === "RED") return t("red");
             if (color === "YELLOW") return t("yellow");
@@ -591,7 +609,12 @@ createApp({
         });
 
         const modeRuleLines = computed(() => gameMode.value === "NO_MERCY"
-            ? [t("noMercyRule1"), t("noMercyRule2"), t("noMercyRule3")]
+            ? [
+                t("noMercyRule1"),
+                t("noMercyRule2"),
+                t("noMercyRule3"),
+                drawPileRule.value === "FINITE_DRAW_PILE" ? t("finiteDrawPileRule") : t("autoRefillRule")
+            ]
             : [t("classicRule1"), t("classicRule2"), t("classicRule3")]
         );
 
@@ -741,7 +764,27 @@ createApp({
 
         const buildGameResult = (gameState) => {
             const players = Array.isArray(gameState.players) ? gameState.players : [];
-            const winner = players.find((player) => String(player.userId) === String(gameState.winnerId));
+            const sortedPlayers = [...players].sort((first, second) =>
+                Number(first.handCount ?? 0) - Number(second.handCount ?? 0)
+                || Number(first.seatIndex ?? Number.MAX_SAFE_INTEGER) - Number(second.seatIndex ?? Number.MAX_SAFE_INTEGER)
+            );
+            let previousHandCount = null;
+            let currentRank = 0;
+            const standings = sortedPlayers.map((player, index) => {
+                const handCount = Number(player.handCount ?? 0);
+                if (previousHandCount === null || handCount !== previousHandCount) {
+                    currentRank = index + 1;
+                    previousHandCount = handCount;
+                }
+                return {
+                    ...player,
+                    handCount,
+                    rank: currentRank,
+                    isMe: String(player.userId) === String(userId.value)
+                };
+            });
+            const winners = standings.filter((player) => player.rank === 1);
+            const winner = winners[0] || players.find((player) => String(player.userId) === String(gameState.winnerId));
             const readyIds = Array.isArray(gameState.rematchReadyPlayerIds) ? gameState.rematchReadyPlayerIds : [];
             const playerIds = new Set(
                 players
@@ -758,6 +801,10 @@ createApp({
             const totalPlayers = playerIds.size;
             const isReady = userId.value != null && readyPlayerIds.has(String(userId.value));
             const allReady = totalPlayers > 0 && readyCount === totalPlayers;
+            const isWinner = winners.some((player) => player.isMe);
+            const finitePileFinished = gameState.finishReason === "DRAW_PILE_EXHAUSTED"
+                || (drawPileRule.value === "FINITE_DRAW_PILE"
+                    && Number(gameState.drawPileSize ?? drawPileSize.value) === 0);
 
             let readinessText = t("rematchNeedAll");
             if (allReady) readinessText = t("rematchReadyAll");
@@ -765,8 +812,12 @@ createApp({
             const statusText = `${t("rematchReadyCount", { ready: readyCount, total: totalPlayers })} · ${readinessText}`;
 
             return {
-                win: String(gameState.winnerId) === String(userId.value),
-                title: winner ? `${winner.username} ${t("wins")}!` : t("gameOver"),
+                win: isWinner || String(gameState.winnerId) === String(userId.value),
+                title: winners.length > 1
+                    ? t("tiedWinners", { names: winners.map((player) => player.username).join(", ") })
+                    : (winner ? `${winner.username} ${t("wins")}!` : t("gameOver")),
+                reasonText: finitePileFinished ? t("drawPileExhausted") : "",
+                standings,
                 statusText,
                 rematchButtonDisabled: restartingGame.value || isReady,
                 rematchButtonText: isReady ? t("ready") : (restartingGame.value ? t("submitting") : t("rematch"))
@@ -792,6 +843,7 @@ createApp({
             maxPlayers.value = 2;
             roundTimeLimitMinutes.value = 10;
             gameMode.value = "CLASSIC";
+            drawPileRule.value = "AUTO_REFILL";
             roomPlayerCount.value = 0;
             gameId.value = null;
             gameStatus.value = "WAITING";
@@ -878,6 +930,9 @@ createApp({
             maxPlayers.value = Number(state.maxPlayers || maxPlayers.value || 2);
             roundTimeLimitMinutes.value = Number(state.roundTimeLimitMinutes || roundTimeLimitMinutes.value || 10);
             gameMode.value = state.gameMode || gameMode.value || "CLASSIC";
+            drawPileRule.value = gameMode.value === "NO_MERCY"
+                ? (state.drawPileRule || drawPileRule.value || "AUTO_REFILL")
+                : "AUTO_REFILL";
         };
 
         const mapTablePlayer = (player) => ({
@@ -980,6 +1035,8 @@ createApp({
                 copyField("pendingDrawType");
                 copyField("lastPenaltyPlayerId");
                 copyField("drawPileSize");
+                copyField("drawPileRule");
+                copyField("finishReason");
                 copyField("winnerId");
                 copyField("rematchReadyPlayerIds");
                 if (hasOwnField(payload, "direction")) {
@@ -1160,6 +1217,7 @@ createApp({
             if (hasOwnField(gameState, "pendingDrawType")) pendingDrawType.value = gameState.pendingDrawType ?? "NONE";
             if (hasOwnField(gameState, "lastPenaltyPlayerId")) lastPenaltyPlayerId.value = gameState.lastPenaltyPlayerId;
             if (hasOwnField(gameState, "drawPileSize")) drawPileSize.value = Number(gameState.drawPileSize ?? 0);
+            if (hasOwnField(gameState, "drawPileRule")) drawPileRule.value = gameState.drawPileRule || "AUTO_REFILL";
             if (hasOwnField(gameState, "topCard") && gameState.topCard) {
                 topCard.value = {
                     ...gameState.topCard,
@@ -1912,6 +1970,7 @@ createApp({
             maxPlayers,
             roundTimeLimitMinutes,
             gameMode,
+            drawPileRule,
             language,
             currentTurn,
             clockwise,
@@ -1958,6 +2017,7 @@ createApp({
             directionArrow,
             currentColorLabel,
             gameModeLabel,
+            drawPileRuleLabel,
             connectionLabel,
             languageLabel,
             selectedCardInfo,

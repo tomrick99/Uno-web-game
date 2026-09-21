@@ -49,6 +49,7 @@
                         <div class="room-meta">
                             <span>{{ room.playerCount || 0 }}/{{ room.maxPlayers || 2 }} {{ t("playersUnit") }}</span>
                             <span>{{ modeLabel(room.gameMode) }}</span>
+                            <span v-if="room.gameMode === 'NO_MERCY'">{{ drawPileRuleLabel(room.drawPileRule) }}</span>
                             <span>{{ room.roundTimeLimitMinutes || 10 }} {{ t("minutesUnit") }}</span>
                         </div>
                     </div>
@@ -85,6 +86,23 @@
                             @click="gameMode = option.value"
                         >{{ option.label }}</button>
                     </div>
+
+                    <template v-if="gameMode === 'NO_MERCY'">
+                        <label>{{ t("drawPileRule") }}</label>
+                        <div class="draw-rule-options">
+                            <button
+                                v-for="option in drawPileRuleOptions"
+                                :key="option.value"
+                                class="draw-rule-card"
+                                :class="{ active: drawPileRule === option.value }"
+                                @click="drawPileRule = option.value"
+                            >
+                                <span class="draw-rule-title">{{ option.label }}</span>
+                                <span class="draw-rule-description">{{ option.description }}</span>
+                                <span v-if="option.warning" class="draw-rule-warning">{{ option.warning }}</span>
+                            </button>
+                        </div>
+                    </template>
                 </div>
                 <div class="modal-actions">
                     <button class="btn-cancel" @click="showCreate = false">{{ t("cancel") }}</button>

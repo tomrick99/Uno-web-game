@@ -7,6 +7,7 @@ import com.uno.entity.Room;
 import com.uno.entity.User;
 import com.uno.entity.enums.CardColor;
 import com.uno.entity.enums.CardType;
+import com.uno.entity.enums.DrawPileRule;
 import com.uno.entity.enums.GameMode;
 import com.uno.entity.enums.GameStatus;
 import com.uno.entity.enums.PendingDrawType;
@@ -121,6 +122,78 @@ class GameServiceTurnLoopConsistencyTest {
         assertTrue(patch.players().get(0).rematchReady());
     }
 
+    @Test
+    void finiteDrawPileEndsOnLastDrawAndLowestHandCountWins() {
+        Fixture fixture = fixture(GameMode.NO_MERCY, List.of(
+                new Card(CardColor.BLUE, CardType.NUMBER, 1),
+                new Card(CardColor.GREEN, CardType.NUMBER, 2)
+        ), List.of(new Card(CardColor.YELLOW, CardType.NUMBER, 3)));
+        fixture.room.setDrawPileRule(DrawPileRule.FINITE_DRAW_PILE);
+        fixture.game.setDrawPileJson("[{\"color\":\"BLUE\",\"type\":\"NUMBER\",\"value\":7}]");
+
+        fixture.service.drawCard(fixture.game.getId(), fixture.alice.getId());
+
+        assertEquals(GameStatus.FINISHED, fixture.game.getStatus());
+        assertEquals(RoomStatus.CLOSED, fixture.room.getStatus());
+        assertNull(fixture.game.getCurrentTurn());
+        assertEquals(fixture.bob.getId(), fixture.template.lastPublicPatch.winnerId());
+        assertEquals("GAME_FINISHED", fixture.template.lastPublicPatch.type());
+        assertEquals(0, fixture.template.lastPublicPatch.drawPileSize());
+
+        Map<String, Object> state = fixture.service.getGameState(fixture.game.getId());
+        assertEquals(DrawPileRule.FINITE_DRAW_PILE.name(), state.get("drawPileRule"));
+        assertEquals("DRAW_PILE_EXHAUSTED", state.get("finishReason"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> players = (List<Map<String, Object>>) state.get("players");
+        assertEquals(1, players.get(1).get("resultRank"));
+        assertEquals(2, players.get(0).get("resultRank"));
+    }
+
+    @Test
+    void autoRefillRecyclesDiscardPileAndKeepsGamePlaying() {
+        Fixture fixture = fixture(GameMode.NO_MERCY, List.of(
+                new Card(CardColor.BLUE, CardType.NUMBER, 1)
+        ), List.of(new Card(CardColor.YELLOW, CardType.NUMBER, 3)));
+        fixture.room.setDrawPileRule(DrawPileRule.AUTO_REFILL);
+        fixture.game.setDiscardPileJson("["
+                + "{\"color\":\"GREEN\",\"type\":\"NUMBER\",\"value\":4},"
+                + "{\"color\":\"RED\",\"type\":\"NUMBER\",\"value\":9}]");
+
+        fixture.service.drawCard(fixture.game.getId(), fixture.alice.getId());
+
+        assertEquals(GameStatus.PLAYING, fixture.game.getStatus());
+        assertEquals(RoomStatus.PLAYING, fixture.room.getStatus());
+        assertEquals(fixture.bob.getId(), fixture.game.getCurrentTurn());
+        assertEquals("CARD_DRAWN_PUBLIC", fixture.template.lastPublicPatch.type());
+        assertEquals(2, fixture.alicePlayer.getHandCards().size());
+    }
+
+    @Test
+    void finiteDrawPileEndsDuringPenaltyWhenNotEnoughCardsRemain() {
+        Fixture fixture = fixture(GameMode.NO_MERCY, List.of(
+                new Card(CardColor.BLUE, CardType.NUMBER, 1)
+        ), List.of(
+                new Card(CardColor.YELLOW, CardType.NUMBER, 3),
+                new Card(CardColor.GREEN, CardType.NUMBER, 4)
+        ));
+        fixture.room.setDrawPileRule(DrawPileRule.FINITE_DRAW_PILE);
+        fixture.game.setCurrentTurn(fixture.bob.getId());
+        fixture.game.setPendingDrawCount(4);
+        fixture.game.setPendingDrawType(PendingDrawType.DRAW_STACK);
+        fixture.game.setLastPenaltyPlayerId(fixture.alice.getId());
+        fixture.game.setDrawPileJson("[{\"color\":\"BLUE\",\"type\":\"NUMBER\",\"value\":7}]");
+
+        fixture.service.drawPenalty(fixture.game.getId(), fixture.bob.getId());
+
+        assertEquals(GameStatus.FINISHED, fixture.game.getStatus());
+        assertEquals(RoomStatus.CLOSED, fixture.room.getStatus());
+        assertEquals(3, fixture.bobPlayer.getHandCards().size());
+        assertEquals(0, fixture.game.getPendingDrawCount());
+        assertEquals(PendingDrawType.NONE, fixture.game.getPendingDrawType());
+        assertEquals(fixture.alice.getId(), fixture.template.lastPublicPatch.winnerId());
+        assertEquals("GAME_FINISHED", fixture.template.lastPublicPatch.type());
+    }
+
     private void assertFinalPenaltyEndsImmediately(List<Card> bobHand) {
         Fixture fixture = fixture(GameMode.CLASSIC, List.of(
                 new Card(CardColor.WILD, CardType.WILD_DRAW_FOUR, 50)
@@ -181,7 +254,9 @@ class GameServiceTurnLoopConsistencyTest {
         when(gameRepository.findById(game.getId())).thenReturn(Optional.of(game));
         when(gameRepository.findByRoom(room)).thenReturn(List.of(game));
         when(userRepository.getReferenceById(alice.getId())).thenReturn(alice);
+        when(userRepository.getReferenceById(bob.getId())).thenReturn(bob);
         when(playerRepository.findByGameAndUser(game, alice)).thenReturn(Optional.of(alicePlayer));
+        when(playerRepository.findByGameAndUser(game, bob)).thenReturn(Optional.of(bobPlayer));
         when(playerRepository.findByGameOrderBySeatIndexAsc(game)).thenReturn(players);
         when(playerRepository.save(any(GamePlayer.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(gameRepository.save(any(Game.class))).thenAnswer(invocation -> invocation.getArgument(0));

@@ -4,6 +4,7 @@ import com.uno.entity.Game;
 import com.uno.entity.GamePlayer;
 import com.uno.entity.Room;
 import com.uno.entity.User;
+import com.uno.entity.enums.DrawPileRule;
 import com.uno.entity.enums.GameMode;
 import com.uno.entity.enums.GameStatus;
 import com.uno.entity.enums.RoomStatus;
@@ -88,6 +89,21 @@ class RoomServiceAdminUpdateTest {
 
         assertEquals(1, states.size());
         assertEquals(2, states.get(0).get("playerCount"));
+    }
+
+    @Test
+    void drawPileRuleIsStoredForNoMercyAndNormalizedForClassic() {
+        User host = new User("host", "pw");
+        host.setId(99L);
+        when(roomRepository.save(any(Room.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Room noMercyRoom = roomService.createRoom(
+                host, 2, 8, 10, GameMode.NO_MERCY, DrawPileRule.FINITE_DRAW_PILE);
+        Room classicRoom = roomService.createRoom(
+                host, 2, 8, 10, GameMode.CLASSIC, DrawPileRule.FINITE_DRAW_PILE);
+
+        assertEquals(DrawPileRule.FINITE_DRAW_PILE, noMercyRoom.getDrawPileRule());
+        assertEquals(DrawPileRule.AUTO_REFILL, classicRoom.getDrawPileRule());
     }
 
     @Test

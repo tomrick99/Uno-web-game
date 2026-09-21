@@ -12,12 +12,14 @@ public class Deck {
 
     private List<Card> drawPile = new ArrayList<>();
     private List<Card> discardPile = new ArrayList<>();
+    private final boolean autoRefill;
 
     public Deck() {
         this(GameMode.CLASSIC);
     }
 
     public Deck(GameMode gameMode) {
+        this.autoRefill = true;
         initializeDeck(gameMode == null ? GameMode.CLASSIC : gameMode);
         shuffle();
     }
@@ -27,6 +29,11 @@ public class Deck {
     }
 
     public Deck(List<Card> drawPile, List<Card> discardPile, GameMode gameMode) {
+        this(drawPile, discardPile, gameMode, true);
+    }
+
+    public Deck(List<Card> drawPile, List<Card> discardPile, GameMode gameMode, boolean autoRefill) {
+        this.autoRefill = autoRefill;
         this.drawPile = new ArrayList<>();
         this.discardPile = new ArrayList<>();
 
@@ -105,7 +112,7 @@ public class Deck {
     }
 
     public Card drawCard() {
-        if (drawPile.isEmpty()) {
+        if (drawPile.isEmpty() && autoRefill) {
             recycleDiscardPile();
         }
         if (drawPile.isEmpty()) {
