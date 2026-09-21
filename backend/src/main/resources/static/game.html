@@ -95,10 +95,23 @@
                     </div>
 
                     <div class="discard-pile">
-                        <div v-if="topCard" class="card" :class="[topCard.color.toLowerCase(), 'large']">
-                            <div class="card-corner top-left">{{ topCard.display }}</div>
-                            <div class="card-center">{{ topCard.display }}</div>
-                            <div class="card-corner bottom-right">{{ topCard.display }}</div>
+                        <div
+                            v-if="topCard"
+                            class="card large"
+                            :class="[topCard.color.toLowerCase(), topCard.visualClass]"
+                            :aria-label="topCard.accessibleLabel"
+                        >
+                            <div class="card-corner top-left" aria-hidden="true">{{ topCard.corner }}</div>
+                            <div class="card-center" aria-hidden="true">
+                                <span v-if="topCard.showWildMark" class="wild-mark"></span>
+                                <span v-if="topCard.showSkipMark" class="skip-mark"></span>
+                                <span v-if="topCard.showSkipAllMark" class="skip-all-mark"><i></i><i></i><i></i></span>
+                                <span v-if="topCard.showDiscardMark" class="discard-mark"><i></i><i></i></span>
+                                <span v-if="topCard.showCardStack" class="card-stack-mark"></span>
+                                <span v-if="topCard.primarySymbol" class="card-primary-symbol">{{ topCard.primarySymbol }}</span>
+                                <span v-if="topCard.secondarySymbol" class="card-secondary-symbol">{{ topCard.secondarySymbol }}</span>
+                            </div>
+                            <div class="card-corner bottom-right" aria-hidden="true">{{ topCard.corner }}</div>
                         </div>
                         <div v-else class="card-placeholder">{{ t("waitingStart") }}</div>
                         <div class="pile-label">{{ t("discardPile") }}</div>
@@ -131,13 +144,22 @@
                     v-for="(card, idx) in handCards"
                     :key="`${card.color}-${card.type}-${card.value}-${idx}`"
                     class="card"
-                    :class="[card.color.toLowerCase(), card.stateClass, { selected: selectedCard === idx }]"
+                    :class="[card.color.toLowerCase(), card.visualClass, card.stateClass, { selected: selectedCard === idx }]"
                     :title="card.hint"
+                    :aria-label="card.accessibleLabel"
                     @click="selectCard(idx)"
                 >
-                    <div class="card-corner top-left">{{ card.display }}</div>
-                    <div class="card-center">{{ card.display }}</div>
-                    <div class="card-corner bottom-right">{{ card.display }}</div>
+                    <div class="card-corner top-left" aria-hidden="true">{{ card.corner }}</div>
+                    <div class="card-center" aria-hidden="true">
+                        <span v-if="card.showWildMark" class="wild-mark"></span>
+                        <span v-if="card.showSkipMark" class="skip-mark"></span>
+                        <span v-if="card.showSkipAllMark" class="skip-all-mark"><i></i><i></i><i></i></span>
+                        <span v-if="card.showDiscardMark" class="discard-mark"><i></i><i></i></span>
+                        <span v-if="card.showCardStack" class="card-stack-mark"></span>
+                        <span v-if="card.primarySymbol" class="card-primary-symbol">{{ card.primarySymbol }}</span>
+                        <span v-if="card.secondarySymbol" class="card-secondary-symbol">{{ card.secondarySymbol }}</span>
+                    </div>
+                    <div class="card-corner bottom-right" aria-hidden="true">{{ card.corner }}</div>
                 </div>
             </div>
 

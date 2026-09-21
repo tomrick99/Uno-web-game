@@ -363,6 +363,51 @@ createApp({
             return "?";
         };
 
+        const getCardVisual = (type, value) => {
+            const cornerSymbols = {
+                SKIP: "⊘",
+                SKIP_ALL: "⊘⊘",
+                REVERSE: "↻",
+                DRAW_TWO: "+2",
+                DRAW_FOUR: "+4",
+                DISCARD_ALL_COLOR: "×",
+                WILD: "✦",
+                WILD_DRAW_FOUR: "+4",
+                WILD_DRAW_SIX: "+6",
+                WILD_DRAW_TEN: "+10",
+                WILD_REVERSE_DRAW_FOUR: "+4↻"
+            };
+            const visual = {
+                visualClass: `type-${String(type || "unknown").toLowerCase().replaceAll("_", "-")}`,
+                corner: type === "NUMBER" ? String(value) : (cornerSymbols[type] || "?"),
+                primarySymbol: "",
+                secondarySymbol: "",
+                showWildMark: false,
+                showSkipMark: false,
+                showSkipAllMark: false,
+                showDiscardMark: false,
+                showCardStack: false
+            };
+
+            if (type === "NUMBER") visual.primarySymbol = String(value);
+            if (type === "SKIP") visual.showSkipMark = true;
+            if (type === "SKIP_ALL") visual.showSkipAllMark = true;
+            if (type === "REVERSE") visual.primarySymbol = "↻";
+            if (type === "DISCARD_ALL_COLOR") visual.showDiscardMark = true;
+            if (["DRAW_TWO", "DRAW_FOUR", "WILD_DRAW_FOUR", "WILD_DRAW_SIX", "WILD_DRAW_TEN"].includes(type)) {
+                visual.showCardStack = true;
+                visual.primarySymbol = `+${getPenaltyValue(type)}`;
+            }
+            if (["DRAW_FOUR", "WILD_DRAW_FOUR"].includes(type)) visual.visualClass += " draw-four-visual";
+            if (type === "WILD") visual.showWildMark = true;
+            if (type === "WILD_REVERSE_DRAW_FOUR") {
+                visual.showCardStack = true;
+                visual.primarySymbol = "+4";
+                visual.secondarySymbol = "↻";
+            }
+            return visual;
+        };
+
         const getPenaltyValue = (type) => {
             if (type === "DRAW_TWO") return 2;
             if (type === "DRAW_FOUR" || type === "WILD_DRAW_FOUR" || type === "WILD_REVERSE_DRAW_FOUR") return 4;
@@ -538,7 +583,9 @@ createApp({
 
         const decorateCard = (card) => ({
             ...card,
+            ...getCardVisual(card.type, card.value),
             display: getCardDisplay(card.type, card.value),
+            accessibleLabel: `${colorName(card.color)} · ${getCardDisplay(card.type, card.value)}. ${getCardDescription(card)}`,
             stateClass: getCardStateClass(card),
             hint: getCardHint(card)
         });
@@ -1115,10 +1162,10 @@ createApp({
             if (hasOwnField(gameState, "drawPileSize")) drawPileSize.value = Number(gameState.drawPileSize ?? 0);
             if (hasOwnField(gameState, "topCard") && gameState.topCard) {
                 topCard.value = {
-                    color: gameState.topCard.color,
-                    type: gameState.topCard.type,
-                    value: gameState.topCard.value,
-                    display: getCardDisplay(gameState.topCard.type, gameState.topCard.value)
+                    ...gameState.topCard,
+                    ...getCardVisual(gameState.topCard.type, gameState.topCard.value),
+                    display: getCardDisplay(gameState.topCard.type, gameState.topCard.value),
+                    accessibleLabel: `${colorName(gameState.topCard.color)} · ${getCardDisplay(gameState.topCard.type, gameState.topCard.value)}. ${getCardDescription(gameState.topCard)}`
                 };
             }
 
