@@ -363,6 +363,41 @@ createApp({
             return "?";
         };
 
+        const getCardVisual = (type, value) => {
+            if (type === "NUMBER") {
+                const number = String(value);
+                return { kind: "number", symbol: number, badge: "", corner: number, isWild: false };
+            }
+            if (type === "SKIP") {
+                return { kind: "skip", symbol: "⊘", badge: "", corner: "⊘", isWild: false };
+            }
+            if (type === "SKIP_ALL") {
+                return { kind: "skip-all", symbol: "", badge: "", corner: "⊘×", isWild: false };
+            }
+            if (type === "REVERSE") {
+                return { kind: "reverse", symbol: "", badge: "", corner: "↻", isWild: false };
+            }
+            if (type === "DRAW_TWO" || type === "DRAW_FOUR") {
+                const amount = type === "DRAW_TWO" ? "+2" : "+4";
+                return { kind: "draw", symbol: amount, badge: "", corner: amount, isWild: false };
+            }
+            if (type === "DISCARD_ALL_COLOR") {
+                return { kind: "discard", symbol: "", badge: "", corner: "⇩", isWild: false };
+            }
+            if (type === "WILD") {
+                return { kind: "wild", symbol: "", badge: "", corner: "W", isWild: true };
+            }
+            if (["WILD_DRAW_FOUR", "WILD_DRAW_SIX", "WILD_DRAW_TEN"].includes(type)) {
+                const amount = type === "WILD_DRAW_FOUR" ? "+4" : (type === "WILD_DRAW_SIX" ? "+6" : "+10");
+                return { kind: "wild-draw", symbol: "", badge: amount, corner: amount, isWild: true };
+            }
+            if (type === "WILD_REVERSE_DRAW_FOUR") {
+                return { kind: "wild-reverse-draw", symbol: "", badge: "+4", corner: "+4↻", isWild: true };
+            }
+            const fallback = getCardDisplay(type, value);
+            return { kind: "action", symbol: fallback, badge: "", corner: fallback, isWild: false };
+        };
+
         const getPenaltyValue = (type) => {
             if (type === "DRAW_TWO") return 2;
             if (type === "DRAW_FOUR" || type === "WILD_DRAW_FOUR" || type === "WILD_REVERSE_DRAW_FOUR") return 4;
@@ -539,6 +574,7 @@ createApp({
         const decorateCard = (card) => ({
             ...card,
             display: getCardDisplay(card.type, card.value),
+            visual: getCardVisual(card.type, card.value),
             stateClass: getCardStateClass(card),
             hint: getCardHint(card)
         });
@@ -1118,7 +1154,8 @@ createApp({
                     color: gameState.topCard.color,
                     type: gameState.topCard.type,
                     value: gameState.topCard.value,
-                    display: getCardDisplay(gameState.topCard.type, gameState.topCard.value)
+                    display: getCardDisplay(gameState.topCard.type, gameState.topCard.value),
+                    visual: getCardVisual(gameState.topCard.type, gameState.topCard.value)
                 };
             }
 

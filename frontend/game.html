@@ -96,9 +96,27 @@
 
                     <div class="discard-pile">
                         <div v-if="topCard" class="card" :class="[topCard.color.toLowerCase(), 'large']">
-                            <div class="card-corner top-left">{{ topCard.display }}</div>
-                            <div class="card-center">{{ topCard.display }}</div>
-                            <div class="card-corner bottom-right">{{ topCard.display }}</div>
+                            <div class="card-corner top-left">{{ topCard.visual.corner }}</div>
+                            <div class="card-center card-face" :class="topCard.visual.kind">
+                                <span v-if="topCard.visual.isWild" class="wild-wheel" aria-hidden="true"></span>
+                                <span v-if="topCard.visual.kind === 'skip-all'" class="skip-all-symbol" aria-hidden="true">
+                                    <span class="skip-person person-one"></span>
+                                    <span class="skip-person person-two"></span>
+                                    <span class="skip-person person-three"></span>
+                                </span>
+                                <span v-if="topCard.visual.kind === 'discard'" class="discard-symbol" aria-hidden="true">
+                                    <span class="discard-card"></span>
+                                    <span class="discard-trail"></span>
+                                    <span class="discard-pile-icon"></span>
+                                </span>
+                                <span v-if="topCard.visual.kind === 'reverse' || topCard.visual.kind === 'wild-reverse-draw'" class="reverse-symbol" aria-hidden="true">
+                                    <span class="reverse-arrow reverse-arrow-top"></span>
+                                    <span class="reverse-arrow reverse-arrow-bottom"></span>
+                                </span>
+                                <span v-if="topCard.visual.symbol" class="card-symbol" aria-hidden="true">{{ topCard.visual.symbol }}</span>
+                                <span v-if="topCard.visual.badge" class="card-effect-badge">{{ topCard.visual.badge }}</span>
+                            </div>
+                            <div class="card-corner bottom-right">{{ topCard.visual.corner }}</div>
                         </div>
                         <div v-else class="card-placeholder">{{ t("waitingStart") }}</div>
                         <div class="pile-label">{{ t("discardPile") }}</div>
@@ -135,9 +153,27 @@
                     :title="card.hint"
                     @click="selectCard(idx)"
                 >
-                    <div class="card-corner top-left">{{ card.display }}</div>
-                    <div class="card-center">{{ card.display }}</div>
-                    <div class="card-corner bottom-right">{{ card.display }}</div>
+                    <div class="card-corner top-left">{{ card.visual.corner }}</div>
+                    <div class="card-center card-face" :class="card.visual.kind">
+                        <span v-if="card.visual.isWild" class="wild-wheel" aria-hidden="true"></span>
+                        <span v-if="card.visual.kind === 'skip-all'" class="skip-all-symbol" aria-hidden="true">
+                            <span class="skip-person person-one"></span>
+                            <span class="skip-person person-two"></span>
+                            <span class="skip-person person-three"></span>
+                        </span>
+                        <span v-if="card.visual.kind === 'discard'" class="discard-symbol" aria-hidden="true">
+                            <span class="discard-card"></span>
+                            <span class="discard-trail"></span>
+                            <span class="discard-pile-icon"></span>
+                        </span>
+                        <span v-if="card.visual.kind === 'reverse' || card.visual.kind === 'wild-reverse-draw'" class="reverse-symbol" aria-hidden="true">
+                            <span class="reverse-arrow reverse-arrow-top"></span>
+                            <span class="reverse-arrow reverse-arrow-bottom"></span>
+                        </span>
+                        <span v-if="card.visual.symbol" class="card-symbol" aria-hidden="true">{{ card.visual.symbol }}</span>
+                        <span v-if="card.visual.badge" class="card-effect-badge">{{ card.visual.badge }}</span>
+                    </div>
+                    <div class="card-corner bottom-right">{{ card.visual.corner }}</div>
                 </div>
             </div>
 
