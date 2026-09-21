@@ -363,17 +363,32 @@
 .card {
     width: 80px;
     height: 120px;
-    border-radius: 10px;
+    box-sizing: border-box;
+    border: 2px solid rgba(255, 255, 255, 0.72);
+    border-radius: 12px;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    padding: 8px;
+    padding: clamp(5px, 0.65vw, 8px);
     font-weight: bold;
     position: relative;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+    isolation: isolate;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.34), inset 0 0 0 2px rgba(0, 0, 0, 0.11);
     transition: all 0.2s;
     cursor: pointer;
     user-select: none;
+}
+
+.card::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 12% -14%;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.93);
+    transform: rotate(-17deg);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.08);
 }
 
 .card.red {
@@ -397,9 +412,14 @@
 }
 
 .card.wild {
-    background: linear-gradient(135deg, #1a1a2e, #16213e, #0F3460);
+    background: conic-gradient(from 35deg, #e74c3c 0 25%, #3498db 0 50%, #2ecc71 0 75%, #f39c12 0), #161627;
     color: white;
-    border: 2px solid var(--yellow);
+    border-color: rgba(255, 255, 255, 0.82);
+}
+
+.card.wild::before {
+    background: #171724;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.16);
 }
 
 .card.large {
@@ -409,8 +429,16 @@
 }
 
 .card-corner {
-    font-size: 12px;
+    position: relative;
+    z-index: 2;
+    width: min-content;
+    max-width: 42%;
+    font-size: clamp(8px, 0.9rem, 13px);
     line-height: 1;
+    letter-spacing: -0.06em;
+    white-space: nowrap;
+    color: white;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.72);
 }
 
 .card-corner.bottom-right {
@@ -419,24 +447,246 @@
 }
 
 .card-center {
-    font-size: clamp(12px, 1.4rem, 24px);
+    position: absolute;
+    z-index: 1;
+    inset: 17% 9%;
+    font-size: clamp(22px, 3.4vw, 48px);
     text-align: center;
-    flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    line-height: 1.05;
-    overflow-wrap: anywhere;
+    line-height: 1;
+    color: #181824;
+    text-shadow: 0 2px 0 rgba(255, 255, 255, 0.42);
 }
 
 .card.wild .card-center {
-    font-size: 22px;
+    color: white;
+    text-shadow: 0 2px 3px rgba(0, 0, 0, 0.7);
+}
+
+.card-primary-symbol,
+.card-secondary-symbol,
+.wild-mark,
+.skip-mark,
+.skip-all-mark,
+.discard-mark,
+.card-stack-mark {
+    position: relative;
+    z-index: 2;
+}
+
+.card-primary-symbol {
+    font-weight: 950;
+    letter-spacing: -0.08em;
+}
+
+.type-reverse .card-primary-symbol {
+    font-size: 1.22em;
+    transform: rotate(-18deg);
+}
+
+.card-secondary-symbol {
+    position: absolute;
+    right: 3%;
+    bottom: 7%;
+    display: grid;
+    place-items: center;
+    width: 0.72em;
+    height: 0.72em;
+    border-radius: 50%;
+    background: #181824;
+    color: white;
+    font-size: 0.54em;
+    text-shadow: none;
+}
+
+.skip-mark {
+    width: 0.9em;
+    aspect-ratio: 1;
+    border: 0.14em solid currentColor;
+    border-radius: 50%;
+    transform: rotate(-35deg);
+}
+
+.skip-mark::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: -9%;
+    width: 0.14em;
+    height: 118%;
+    border-radius: 999px;
+    background: currentColor;
+    transform: translateX(-50%);
+}
+
+.skip-all-mark {
+    width: 1.18em;
+    height: 0.82em;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    transform: rotate(-5deg);
+}
+
+.skip-all-mark i {
+    position: relative;
+    width: 0.24em;
+    height: 0.35em;
+    border-radius: 0.12em 0.12em 0.05em 0.05em;
+    background: currentColor;
+}
+
+.skip-all-mark i::before {
+    content: "";
+    position: absolute;
+    top: -0.22em;
+    left: 50%;
+    width: 0.21em;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: currentColor;
+    transform: translateX(-50%);
+}
+
+.skip-all-mark i:nth-child(2) {
+    transform: scale(1.16);
+    transform-origin: bottom center;
+}
+
+.skip-all-mark::after {
+    content: "";
+    position: absolute;
+    left: -4%;
+    top: 45%;
+    width: 108%;
+    height: 0.13em;
+    border-radius: 999px;
+    background: currentColor;
+    box-shadow: 0 0 0 0.035em rgba(255, 255, 255, 0.85);
+    transform: rotate(-36deg);
+}
+
+.discard-mark {
+    width: 1em;
+    height: 1.02em;
+}
+
+.discard-mark i {
+    position: absolute;
+    top: 0.02em;
+    width: 0.32em;
+    height: 0.42em;
+    border: 0.055em solid currentColor;
+    border-radius: 0.06em;
+    background: rgba(255, 255, 255, 0.62);
+}
+
+.discard-mark i:first-child {
+    left: 0.18em;
+    transform: rotate(-18deg);
+}
+
+.discard-mark i:nth-child(2) {
+    right: 0.17em;
+    transform: rotate(16deg);
+}
+
+.discard-mark::before {
+    content: "";
+    position: absolute;
+    z-index: 2;
+    left: 0.14em;
+    top: 0.39em;
+    width: 0.72em;
+    height: 0.11em;
+    border-radius: 999px;
+    background: currentColor;
+    box-shadow: 0 -0.11em 0 -0.035em currentColor;
+}
+
+.discard-mark::after {
+    content: "";
+    position: absolute;
+    z-index: 1;
+    left: 0.22em;
+    bottom: 0.02em;
+    width: 0.56em;
+    height: 0.5em;
+    box-sizing: border-box;
+    border: 0.075em solid currentColor;
+    border-top: 0;
+    border-radius: 0.04em 0.04em 0.11em 0.11em;
+    background: repeating-linear-gradient(90deg, transparent 0 0.13em, currentColor 0.13em 0.18em);
+}
+
+.card-stack-mark {
+    position: absolute;
+    width: 0.76em;
+    height: 0.98em;
+    border: 0.055em solid currentColor;
+    border-radius: 0.1em;
+    opacity: 0.22;
+    transform: rotate(-8deg) translate(-0.12em, 0.01em);
+}
+
+.card-stack-mark::before,
+.card-stack-mark::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: inherit;
+    border-radius: inherit;
+}
+
+.card-stack-mark::before {
+    transform: translate(0.12em, -0.08em);
+}
+
+.card-stack-mark::after {
+    transform: translate(0.24em, -0.16em);
+}
+
+.draw-four-visual .card-center {
+    inset: 17% 8%;
+}
+
+.draw-four-visual .card-primary-symbol {
+    font-size: 0.92em;
+    transform: translateY(0.015em);
+}
+
+.draw-four-visual .card-stack-mark {
+    width: 0.76em;
+    height: 0.98em;
+    transform: rotate(-8deg) translate(-0.12em, 0.01em);
+}
+
+.type-wild-draw-ten .card-primary-symbol,
+.type-wild-reverse-draw-four .card-primary-symbol {
+    font-size: 0.78em;
+}
+
+.wild-mark {
+    width: 1.05em;
+    aspect-ratio: 1;
+    border: 0.06em solid white;
+    border-radius: 50%;
+    background: conic-gradient(#e74c3c 0 25%, #3498db 0 50%, #2ecc71 0 75%, #f39c12 0);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    transform: rotate(-17deg);
 }
 
 .card-back {
     background: linear-gradient(135deg, #1a1a2e, #16213e) !important;
     border: 2px solid rgba(255, 255, 255, 0.2) !important;
     color: var(--yellow) !important;
+}
+
+.card-back::before {
+    inset: 18% -18%;
+    background: linear-gradient(135deg, #e74c3c, #f39c12);
 }
 
 .card-back-design {
@@ -493,6 +743,14 @@
     transition: all 0.2s;
     width: clamp(52px, 6.4vw, 90px);
     height: clamp(78px, 9.4vw, 130px);
+}
+
+.hand-cards .card-center {
+    font-size: clamp(22px, 3.2vw, 43px);
+}
+
+.hand-cards .card-corner {
+    font-size: clamp(8px, 1.05vw, 13px);
 }
 
 .hand-cards .card.playable:hover {
@@ -986,6 +1244,21 @@
     .table-surface .card-placeholder {
         width: 76px;
         height: 114px;
+    }
+
+    .card {
+        border-radius: 9px;
+        padding: 5px;
+    }
+
+    .card-center,
+    .hand-cards .card-center {
+        font-size: clamp(22px, 8vw, 36px);
+    }
+
+    .card-corner,
+    .hand-cards .card-corner {
+        font-size: clamp(8px, 2.5vw, 11px);
     }
 
     .game-help-panel {
