@@ -203,6 +203,7 @@
 }
 
 .opponent-avatar {
+    flex: 0 0 44px;
     width: 44px;
     height: 44px;
     border-radius: 50%;
@@ -213,6 +214,14 @@
     font-size: 20px;
     font-weight: bold;
     color: white;
+    overflow: hidden;
+}
+
+.opponent-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
 }
 
 .player-info {

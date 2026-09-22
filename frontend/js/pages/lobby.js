@@ -7,6 +7,12 @@ const websocketEndpoint = "/api/ws";
 createApp({
     setup() {
         const username = ref("");
+        const avatarDataUrl = ref("");
+        const avatarFileInput = ref(null);
+        const cropCanvas = ref(null);
+        const showAvatarCrop = ref(false);
+        const cropZoom = ref(1);
+        const savingAvatar = ref(false);
         const rooms = ref([]);
         const showCreate = ref(false);
         const maxPlayers = ref(2);
@@ -29,6 +35,9 @@ createApp({
         let disconnectedAt = null;
         let isConnecting = false;
         let shouldReconnect = true;
+        let cropImage = null;
+        let cropOffset = { x: 0, y: 0 };
+        let cropDrag = null;
 
         const messages = {
             zh: {
@@ -58,6 +67,18 @@ createApp({
                 reconnecting: "正在重连",
                 fallback: "实时断开，轮询中",
                 syncStatus: "同步状态",
+                avatar: "头像",
+                setAvatar: "设置头像",
+                cropAvatar: "裁剪头像",
+                cropAvatarHelp: "拖动图片调整位置，使用滑杆缩放。保存后将显示为圆形头像。",
+                zoom: "缩放",
+                reselectPhoto: "重新选择照片",
+                saveAvatar: "保存头像",
+                saving: "保存中...",
+                avatarInvalidType: "请选择 JPEG、PNG、WebP 或 GIF 图片。",
+                avatarTooLarge: "图片不能超过 8 MB。",
+                avatarLoadFailed: "无法读取这张图片。",
+                avatarSaveFailed: "头像保存失败。",
                 drawPileRule: "抽牌堆耗尽规则",
                 autoRefill: "自动补充",
                 autoRefillDescription: "抽牌堆用完后，用弃牌堆继续游戏。",
@@ -92,6 +113,18 @@ createApp({
                 reconnecting: "Reconnecting",
                 fallback: "Fallback polling",
                 syncStatus: "Sync",
+                avatar: "Avatar",
+                setAvatar: "Set avatar",
+                cropAvatar: "Crop avatar",
+                cropAvatarHelp: "Drag to reposition and use the slider to zoom. The saved avatar will be circular.",
+                zoom: "Zoom",
+                reselectPhoto: "Choose Another Photo",
+                saveAvatar: "Save Avatar",
+                saving: "Saving...",
+                avatarInvalidType: "Choose a JPEG, PNG, WebP, or GIF image.",
+                avatarTooLarge: "The image must be no larger than 8 MB.",
+                avatarLoadFailed: "This image could not be loaded.",
+                avatarSaveFailed: "Failed to save avatar.",
                 drawPileRule: "Draw-pile exhaustion rule",
                 autoRefill: "Auto Refill",
                 autoRefillDescription: "Recycle the discard pile and keep playing when the draw pile runs out.",
@@ -136,6 +169,131 @@ createApp({
             language.value = language.value === "zh" ? "en" : "zh";
             localStorage.setItem("unoLanguage", language.value);
             applyLanguage();
+        };
+
+        const chooseAvatarFile = () => {
+            if (!avatarFileInput.value) return;
+            avatarFileInput.value.value = "";
+            avatarFileInput.value.click();
+        };
+
+        const clearAvatarFileInput = () => {
+            if (avatarFileInput.value) avatarFileInput.value.value = "";
+        };
+
+        const renderAvatarCrop = () => {
+            const canvas = cropCanvas.value;
+            if (!canvas || !cropImage) return;
+            const context = canvas.getContext("2d");
+            const size = canvas.width;
+            const baseScale = Math.max(size / cropImage.naturalWidth, size / cropImage.naturalHeight);
+            const scale = baseScale * Number(cropZoom.value || 1);
+            const width = cropImage.naturalWidth * scale;
+            const height = cropImage.naturalHeight * scale;
+            const centeredX = (size - width) / 2;
+            const centeredY = (size - height) / 2;
+            const x = Math.min(0, Math.max(size - width, centeredX + cropOffset.x));
+            const y = Math.min(0, Math.max(size - height, centeredY + cropOffset.y));
+            cropOffset = { x: x - centeredX, y: y - centeredY };
+            context.clearRect(0, 0, size, size);
+            context.fillStyle = "#17172f";
+            context.fillRect(0, 0, size, size);
+            context.drawImage(cropImage, x, y, width, height);
+        };
+
+        const handleAvatarFile = (event) => {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+            if (!allowedTypes.has(file.type)) {
+                errorMsg.value = t("avatarInvalidType");
+                clearAvatarFileInput();
+                return;
+            }
+            if (file.size > 8 * 1024 * 1024) {
+                errorMsg.value = t("avatarTooLarge");
+                clearAvatarFileInput();
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = () => {
+                const image = new Image();
+                image.onload = () => {
+                    cropImage = image;
+                    cropZoom.value = 1;
+                    cropOffset = { x: 0, y: 0 };
+                    showAvatarCrop.value = true;
+                    errorMsg.value = "";
+                    setTimeout(renderAvatarCrop, 0);
+                };
+                image.onerror = () => {
+                    errorMsg.value = t("avatarLoadFailed");
+                    clearAvatarFileInput();
+                };
+                image.src = String(reader.result || "");
+            };
+            reader.onerror = () => {
+                errorMsg.value = t("avatarLoadFailed");
+                clearAvatarFileInput();
+            };
+            reader.readAsDataURL(file);
+        };
+
+        const startCropDrag = (event) => {
+            if (!cropImage || !cropCanvas.value) return;
+            event.preventDefault();
+            cropCanvas.value.setPointerCapture?.(event.pointerId);
+            cropDrag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+        };
+
+        const moveCropDrag = (event) => {
+            if (!cropDrag || cropDrag.pointerId !== event.pointerId || !cropCanvas.value) return;
+            event.preventDefault();
+            const rect = cropCanvas.value.getBoundingClientRect();
+            const scale = cropCanvas.value.width / rect.width;
+            cropOffset = {
+                x: cropOffset.x + (event.clientX - cropDrag.x) * scale,
+                y: cropOffset.y + (event.clientY - cropDrag.y) * scale
+            };
+            cropDrag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+            renderAvatarCrop();
+        };
+
+        const endCropDrag = (event) => {
+            if (!cropDrag || cropDrag.pointerId !== event.pointerId) return;
+            cropCanvas.value?.releasePointerCapture?.(event.pointerId);
+            cropDrag = null;
+        };
+
+        const cancelAvatarCrop = () => {
+            if (savingAvatar.value) return;
+            showAvatarCrop.value = false;
+            cropImage = null;
+            cropDrag = null;
+            clearAvatarFileInput();
+        };
+
+        const saveAvatar = async () => {
+            if (!cropCanvas.value || !cropImage || savingAvatar.value) return;
+            savingAvatar.value = true;
+            try {
+                renderAvatarCrop();
+                const croppedAvatar = cropCanvas.value.toDataURL("image/jpeg", 0.86);
+                const response = await axios.put(`${apiBase}/user/avatar`, { avatarDataUrl: croppedAvatar });
+                if (response.data.code !== 200) {
+                    throw new Error(response.data.message || t("avatarSaveFailed"));
+                }
+                avatarDataUrl.value = response.data.data?.avatarDataUrl || croppedAvatar;
+                showAvatarCrop.value = false;
+                cropImage = null;
+                clearAvatarFileInput();
+                infoMsg.value = response.data.message || t("saveAvatar");
+            } catch (error) {
+                errorMsg.value = error.response?.data?.message || error.message || t("avatarSaveFailed");
+            } finally {
+                savingAvatar.value = false;
+            }
         };
 
         const consumeLobbyNotice = () => {
@@ -375,6 +533,7 @@ createApp({
                 }
                 const currentUser = res.data.data || {};
                 username.value = currentUser.username || "";
+                avatarDataUrl.value = currentUser.avatarDataUrl || "";
                 if (currentUser.id) localStorage.setItem("userId", currentUser.id);
                 if (currentUser.username) localStorage.setItem("username", currentUser.username);
                 console.info("[UNO-LOBBY] init currentUser ok", currentUser.username || "");
@@ -502,6 +661,12 @@ createApp({
 
         return {
             username,
+            avatarDataUrl,
+            avatarFileInput,
+            cropCanvas,
+            showAvatarCrop,
+            cropZoom,
+            savingAvatar,
             rooms,
             showCreate,
             maxPlayers,
@@ -518,6 +683,14 @@ createApp({
             t,
             languageLabel,
             toggleLanguage,
+            chooseAvatarFile,
+            handleAvatarFile,
+            renderAvatarCrop,
+            startCropDrag,
+            moveCropDrag,
+            endCropDrag,
+            cancelAvatarCrop,
+            saveAvatar,
             modeLabel,
             drawPileRuleLabel,
             playerOptions,

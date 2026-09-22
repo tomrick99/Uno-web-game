@@ -2,11 +2,13 @@ package com.uno.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
+import org.hibernate.annotations.DynamicUpdate;
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "uno_user")
 @JsonIgnoreProperties({"password", "createdAt"})
+@DynamicUpdate
 public class User {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -17,6 +19,10 @@ public class User {
 
     @Column(nullable = false)
     private String password;  // BCrypt 加密存储
+
+    @Lob
+    @Column(name = "avatar_data_url", columnDefinition = "MEDIUMTEXT")
+    private String avatarDataUrl;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
@@ -43,6 +49,9 @@ public class User {
 
     public String getPassword() { return password; }
     public void setPassword(String password) { this.password = password; }
+
+    public String getAvatarDataUrl() { return avatarDataUrl; }
+    public void setAvatarDataUrl(String avatarDataUrl) { this.avatarDataUrl = avatarDataUrl; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

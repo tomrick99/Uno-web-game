@@ -57,6 +57,26 @@ class GameServiceTurnLoopConsistencyTest {
     }
 
     @Test
+    void realtimePlayerPatchKeepsAvatarMatchedToUserId() {
+        Fixture fixture = fixture(GameMode.CLASSIC, List.of(
+                new Card(CardColor.RED, CardType.NUMBER, 3),
+                new Card(CardColor.BLUE, CardType.NUMBER, 1)
+        ), List.of(new Card(CardColor.GREEN, CardType.NUMBER, 7)));
+        fixture.alice.setAvatarDataUrl("data:image/png;base64,alice-avatar");
+        fixture.bob.setAvatarDataUrl("data:image/png;base64,bob-avatar");
+
+        fixture.service.playCard(fixture.game.getId(), fixture.alice.getId(), 0, null);
+
+        PublicGamePatch patch = fixture.template.lastPublicPatch;
+        assertEquals("data:image/png;base64,alice-avatar", patch.players().stream()
+                .filter(player -> player.userId().equals(fixture.alice.getId()))
+                .findFirst().orElseThrow().avatarDataUrl());
+        assertEquals("data:image/png;base64,bob-avatar", patch.players().stream()
+                .filter(player -> player.userId().equals(fixture.bob.getId()))
+                .findFirst().orElseThrow().avatarDataUrl());
+    }
+
+    @Test
     void noMercyPenaltyPatchCarriesDrawStackType() {
         Fixture fixture = fixture(GameMode.NO_MERCY, List.of(
                 new Card(CardColor.RED, CardType.DRAW_FOUR, 40),

@@ -22,6 +22,18 @@
         <header class="top-bar">
             <div class="logo-small">UNO</div>
             <div class="user-info">
+                <button class="profile-avatar-button" :title="t('setAvatar')" :aria-label="t('setAvatar')" @click="chooseAvatarFile">
+                    <img v-if="avatarDataUrl" :src="avatarDataUrl" :alt="t('avatar')">
+                    <span v-else>{{ username.charAt(0).toUpperCase() }}</span>
+                    <span class="avatar-edit-mark" aria-hidden="true">✎</span>
+                </button>
+                <input
+                    ref="avatarFileInput"
+                    class="avatar-file-input"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    @change="handleAvatarFile"
+                >
                 <span class="username">{{ username }}</span>
                 <button class="lang-toggle" @click="toggleLanguage">{{ languageLabel }}</button>
                 <button v-if="isAdmin" class="btn-admin" @click="goToAdmin">{{ t("admin") }}</button>
@@ -54,7 +66,13 @@
                         </div>
                     </div>
                     <div class="room-action">
-                        <span class="room-players">{{ t("host") }}: {{ room.host?.username || t("unknown") }}</span>
+                        <div class="room-host-identity">
+                            <span class="room-host-avatar">
+                                <img v-if="room.host?.avatarDataUrl" :src="room.host.avatarDataUrl" :alt="t('avatar')">
+                                <span v-else>{{ (room.host?.username || '?').charAt(0).toUpperCase() }}</span>
+                            </span>
+                            <span class="room-players">{{ t("host") }}: {{ room.host?.username || t("unknown") }}</span>
+                        </div>
                         <button class="btn-join">{{ t("join") }}</button>
                     </div>
                 </div>
@@ -107,6 +125,34 @@
                 <div class="modal-actions">
                     <button class="btn-cancel" @click="showCreate = false">{{ t("cancel") }}</button>
                     <button class="btn-primary" @click="createRoom">{{ t("create") }}</button>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="showAvatarCrop" class="modal-overlay" @click.self="cancelAvatarCrop">
+            <div class="modal-card avatar-crop-card">
+                <h3>{{ t("cropAvatar") }}</h3>
+                <p class="avatar-crop-help">{{ t("cropAvatarHelp") }}</p>
+                <div class="avatar-crop-workspace">
+                    <canvas
+                        ref="cropCanvas"
+                        width="280"
+                        height="280"
+                        @pointerdown="startCropDrag"
+                        @pointermove="moveCropDrag"
+                        @pointerup="endCropDrag"
+                        @pointercancel="endCropDrag"
+                    ></canvas>
+                    <div class="avatar-crop-guide" aria-hidden="true"></div>
+                </div>
+                <label class="avatar-zoom-label" for="avatarZoom">{{ t("zoom") }}</label>
+                <input id="avatarZoom" v-model.number="cropZoom" class="avatar-zoom" type="range" min="1" max="3" step="0.01" @input="renderAvatarCrop">
+                <div class="modal-actions avatar-crop-actions">
+                    <button class="btn-reselect" :disabled="savingAvatar" @click="chooseAvatarFile">{{ t("reselectPhoto") }}</button>
+                    <button class="btn-cancel" :disabled="savingAvatar" @click="cancelAvatarCrop">{{ t("cancel") }}</button>
+                    <button class="btn-primary" :disabled="savingAvatar" @click="saveAvatar">
+                        {{ savingAvatar ? t("saving") : t("saveAvatar") }}
+                    </button>
                 </div>
             </div>
         </div>

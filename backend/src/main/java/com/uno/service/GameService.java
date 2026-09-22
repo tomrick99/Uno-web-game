@@ -195,6 +195,43 @@ public class GameService {
         return removed;
     }
 
+    public void broadcastPlayerProfileUpdate(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
+        List<Long> roomIds = gamePlayerRepository.findByUser(user).stream()
+                .map(GamePlayer::getGame)
+                .filter(game -> game != null && game.getRoom() != null)
+                .map(game -> game.getRoom().getId())
+                .distinct()
+                .toList();
+
+        for (Long roomId : roomIds) {
+            withRoomLock(roomId, () -> {
+                Room room = roomRepository.findById(roomId).orElse(null);
+                if (room == null) {
+                    return null;
+                }
+                Game game = gameRepository.findByRoom(room).stream().findFirst().orElse(null);
+                long version = bumpStateVersion(roomId);
+                Map<String, Object> roomState = getRoomStateWithVersion(room, game);
+                roomState.put("version", version);
+                wsService.broadcastRoomState(roomState, "PLAYER_PROFILE_UPDATED", user.getUsername() + " updated their avatar");
+                wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", null);
+                if (game != null) {
+                    List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+                    wsService.broadcastPublicGamePatch(buildPublicGamePatch(
+                            game,
+                            players,
+                            "PLAYER_PROFILE_UPDATED",
+                            userId,
+                            user.getUsername(),
+                            null));
+                }
+                return null;
+            });
+        }
+    }
+
     public Map<String, Object> restartGame(Long gameId, Long userId) {
         Long roomId = getRoomIdByGameId(gameId);
         return withRoomLock(roomId, () -> doRestartGame(gameId, userId));
@@ -310,6 +347,7 @@ public class GameService {
             Map<String, Object> player = new LinkedHashMap<>();
             player.put("userId", gp.getUser().getId());
             player.put("username", gp.getUser().getUsername());
+            player.put("avatarDataUrl", gp.getUser().getAvatarDataUrl());
             player.put("handCount", hand.size());
             player.put("seatIndex", gp.getSeatIndex());
             player.put("saidUno", gp.isSaidUno());
@@ -1705,6 +1743,7 @@ public class GameService {
                 publicPlayers.add(new PublicPlayerInfo(
                         player.getUser().getId(),
                         player.getUser().getUsername(),
+                        player.getUser().getAvatarDataUrl(),
                         player.getHandCards() != null ? player.getHandCards().size() : 0,
                         player.getSeatIndex(),
                         player.isSaidUno(),

@@ -97,6 +97,7 @@ createApp({
                 players: "玩家",
                 cardsUnit: "张牌",
                 me: "我",
+                avatar: "头像",
                 currentColor: "当前颜色",
                 backToLobby: "返回大厅",
                 canDraw: "可以抽牌",
@@ -182,6 +183,7 @@ createApp({
                 players: "Players",
                 cardsUnit: "cards",
                 me: "Me",
+                avatar: "avatar",
                 currentColor: "Color",
                 backToLobby: "Back to Lobby",
                 canDraw: "You can draw",
@@ -912,6 +914,7 @@ createApp({
         const mapTablePlayer = (player) => ({
             userId: player.userId,
             username: player.username,
+            avatarDataUrl: player.avatarDataUrl || null,
             seatIndex: player.seatIndex,
             handCount: player.handCount ?? 0,
             saidUno: Boolean(player.saidUno),
@@ -934,6 +937,7 @@ createApp({
         const mapIncomingPublicPlayers = (players) => (Array.isArray(players) ? players : []).map((player) => ({
             userId: player.userId,
             username: player.username,
+            avatarDataUrl: player.avatarDataUrl || null,
             handCount: player.handCount ?? 0,
             seatIndex: player.seatIndex,
             saidUno: Boolean(player.saidUno),

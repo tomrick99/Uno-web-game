@@ -82,7 +82,7 @@ class GameWebSocketServiceTest {
                 42,
                 "PLAYING",
                 "PLAYING",
-                List.of(new PublicPlayerInfo(1L, "alice", 4, 0, false, false, false)),
+                List.of(new PublicPlayerInfo(1L, "alice", null, 4, 0, false, false, false)),
                 null,
                 List.of(),
                 "played",

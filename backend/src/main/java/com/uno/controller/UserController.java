@@ -2,20 +2,27 @@ package com.uno.controller;
 
 import com.uno.dto.request.LoginRequest;
 import com.uno.dto.request.RegisterRequest;
+import com.uno.dto.request.UpdateAvatarRequest;
 import com.uno.dto.response.ApiResponse;
 import com.uno.entity.User;
+import com.uno.service.GameService;
 import com.uno.service.UserService;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/user")
 public class UserController {
 
     private final UserService userService;
+    private final GameService gameService;
 
-    public UserController(UserService userService) {
+    public UserController(UserService userService, GameService gameService) {
         this.userService = userService;
+        this.gameService = gameService;
     }
 
     /**
@@ -72,5 +79,24 @@ public class UserController {
                     return ApiResponse.success(user);
                 })
                 .orElseGet(() -> ApiResponse.error(404, "用户不存在"));
+    }
+
+    @PutMapping("/avatar")
+    public ApiResponse<Map<String, Object>> updateAvatar(@RequestBody UpdateAvatarRequest request, HttpSession session) {
+        Long userId = (Long) session.getAttribute("userId");
+        if (userId == null) {
+            return ApiResponse.error(401, "未登录");
+        }
+        try {
+            User user = userService.updateAvatar(userId, request != null ? request.getAvatarDataUrl() : null);
+            gameService.broadcastPlayerProfileUpdate(userId);
+            Map<String, Object> profile = new LinkedHashMap<>();
+            profile.put("id", user.getId());
+            profile.put("username", user.getUsername());
+            profile.put("avatarDataUrl", user.getAvatarDataUrl());
+            return ApiResponse.success("头像已保存", profile);
+        } catch (IllegalArgumentException exception) {
+            return ApiResponse.error(400, exception.getMessage());
+        }
     }
 }
