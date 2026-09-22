@@ -62,6 +62,9 @@ class GameServiceSnapshotVersionTest {
         Room room = buildRoom(11L, "ROOM11", RoomStatus.PLAYING);
         Game game = buildGame(22L, room, GameStatus.PLAYING, 33L);
         User user = buildUser(33L, "alice");
+        user.setAvatarData(new byte[]{1});
+        user.setAvatarContentType("image/jpeg");
+        user.setAvatarUpdatedAt(LocalDateTime.of(2026, 1, 1, 12, 0));
         room.setHost(user);
 
         GamePlayer player = buildPlayer(game, user, 0, List.of(
@@ -89,6 +92,10 @@ class GameServiceSnapshotVersionTest {
         assertEquals(snapshot.get("version"), snapshot.get("roomVersion"));
         assertEquals(snapshot.get("version"), snapshot.get("gameVersion"));
         assertEquals(snapshot.get("version"), snapshot.get("handVersion"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> players = (List<Map<String, Object>>) snapshotGameState.get("players");
+        assertEquals(33L, players.get(0).get("userId"));
+        assertEquals(user.getAvatarUrl(), players.get(0).get("avatarUrl"));
     }
 
     @Test

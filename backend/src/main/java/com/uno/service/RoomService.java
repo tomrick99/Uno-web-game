@@ -213,6 +213,7 @@ public class RoomService {
             Map<String, Object> host = new LinkedHashMap<>();
             host.put("userId", room.getHost().getId());
             host.put("username", room.getHost().getUsername());
+            host.put("avatarUrl", room.getHost().getAvatarUrl());
             state.put("host", host);
 
             Optional<Game> gameOpt = gameRepository.findByRoom(room).stream().findFirst();
@@ -230,6 +231,7 @@ public class RoomService {
                     Map<String, Object> player = new LinkedHashMap<>();
                     player.put("userId", gp.getUser().getId());
                     player.put("username", gp.getUser().getUsername());
+                    player.put("avatarUrl", gp.getUser().getAvatarUrl());
                     player.put("seatIndex", gp.getSeatIndex());
                     player.put("handCount", gp.getHandCards().size());
                     player.put("saidUno", gp.isSaidUno());

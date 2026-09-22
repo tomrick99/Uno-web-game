@@ -310,6 +310,7 @@ public class GameService {
             Map<String, Object> player = new LinkedHashMap<>();
             player.put("userId", gp.getUser().getId());
             player.put("username", gp.getUser().getUsername());
+            player.put("avatarUrl", gp.getUser().getAvatarUrl());
             player.put("handCount", hand.size());
             player.put("seatIndex", gp.getSeatIndex());
             player.put("saidUno", gp.isSaidUno());
@@ -1705,6 +1706,7 @@ public class GameService {
                 publicPlayers.add(new PublicPlayerInfo(
                         player.getUser().getId(),
                         player.getUser().getUsername(),
+                        player.getUser().getAvatarUrl(),
                         player.getHandCards() != null ? player.getHandCards().size() : 0,
                         player.getSeatIndex(),
                         player.isSaidUno(),

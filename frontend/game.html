@@ -63,7 +63,10 @@
                     class="table-player"
                     :class="[getPlayerSeatClass(index), { 'current-turn': player.isCurrentTurn, me: player.isMe }]"
                 >
-                    <div class="opponent-avatar">{{ player.username.charAt(0).toUpperCase() }}</div>
+                    <div class="opponent-avatar">
+                        <img v-if="player.avatarUrl" :src="player.avatarUrl" :alt="`${player.username} ${t('avatar')}`">
+                        <span v-else>{{ player.username.charAt(0).toUpperCase() }}</span>
+                    </div>
                     <div class="player-info">
                         <div class="opponent-name">{{ player.username }}<span v-if="player.isMe"> · {{ t("me") }}</span></div>
                         <div class="player-meta">{{ player.handCount }} {{ t("cardsUnit") }}</div>

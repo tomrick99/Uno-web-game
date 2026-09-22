@@ -154,6 +154,7 @@ createApp({
                 finalRanking: "最终排名",
                 playerLeftTitle: "有玩家退出",
                 playerLeftContinue: "{name} 已退出游戏。是否由剩余玩家继续当前游戏？",
+                avatar: "头像",
                 continueGame: "继续游戏",
                 leaveGame: "退出游戏",
                 cardNumber: "数字牌：颜色相同或数字相同即可出。",
@@ -239,6 +240,7 @@ createApp({
                 finalRanking: "Final ranking",
                 playerLeftTitle: "Player Left",
                 playerLeftContinue: "{name} left the game. Continue with the remaining players?",
+                avatar: "avatar",
                 continueGame: "Continue Game",
                 leaveGame: "Leave Game",
                 cardNumber: "Number: play on matching color or matching number.",
@@ -912,6 +914,7 @@ createApp({
         const mapTablePlayer = (player) => ({
             userId: player.userId,
             username: player.username,
+            avatarUrl: player.avatarUrl || null,
             seatIndex: player.seatIndex,
             handCount: player.handCount ?? 0,
             saidUno: Boolean(player.saidUno),
@@ -934,6 +937,7 @@ createApp({
         const mapIncomingPublicPlayers = (players) => (Array.isArray(players) ? players : []).map((player) => ({
             userId: player.userId,
             username: player.username,
+            avatarUrl: player.avatarUrl || null,
             handCount: player.handCount ?? 0,
             seatIndex: player.seatIndex,
             saidUno: Boolean(player.saidUno),

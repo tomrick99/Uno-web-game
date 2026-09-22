@@ -7,6 +7,16 @@ const websocketEndpoint = "/api/ws";
 createApp({
     setup() {
         const username = ref("");
+        const avatarUrl = ref("");
+        const avatarInput = ref(null);
+        const cropStage = ref(null);
+        const showAvatarEditor = ref(false);
+        const avatarSourceUrl = ref("");
+        const avatarZoom = ref(1);
+        const avatarPan = ref({ x: 0, y: 0 });
+        const avatarBaseSize = ref({ width: 280, height: 280, scale: 1 });
+        const avatarSaving = ref(false);
+        const avatarError = ref("");
         const rooms = ref([]);
         const showCreate = ref(false);
         const maxPlayers = ref(2);
@@ -63,7 +73,19 @@ createApp({
                 autoRefillDescription: "抽牌堆用完后，用弃牌堆继续游戏。",
                 autoRefillWarning: "提示：该模式可能使对局持续更久。",
                 finiteDrawPile: "有限抽牌堆",
-                finiteDrawPileDescription: "抽牌堆用完即结束，手牌最少者胜出。"
+                finiteDrawPileDescription: "抽牌堆用完即结束，手牌最少者胜出。",
+                changeAvatar: "设置头像",
+                cropAvatar: "裁剪头像",
+                cropHelp: "拖动图片调整位置，使用滑块缩放。头像将保存为统一的圆形比例。",
+                zoom: "缩放",
+                chooseAnother: "重新选择",
+                saveAvatar: "保存头像",
+                savingAvatar: "保存中…",
+                invalidAvatarType: "请选择 JPEG、PNG、WebP 或 GIF 图片",
+                avatarTooLarge: "原图片不能超过 10 MB",
+                avatarLoadFailed: "无法读取这张图片",
+                avatarSaveFailed: "头像保存失败",
+                avatarSaved: "头像已保存"
             },
             en: {
                 admin: "Admin",
@@ -97,7 +119,19 @@ createApp({
                 autoRefillDescription: "Recycle the discard pile and keep playing when the draw pile runs out.",
                 autoRefillWarning: "Note: this mode may result in longer games.",
                 finiteDrawPile: "Finite Draw Pile",
-                finiteDrawPileDescription: "End the game when the draw pile runs out; the fewest cards wins."
+                finiteDrawPileDescription: "End the game when the draw pile runs out; the fewest cards wins.",
+                changeAvatar: "Set avatar",
+                cropAvatar: "Crop avatar",
+                cropHelp: "Drag to reposition and use the slider to zoom. The avatar is saved at a consistent square ratio.",
+                zoom: "Zoom",
+                chooseAnother: "Choose another",
+                saveAvatar: "Save avatar",
+                savingAvatar: "Saving…",
+                invalidAvatarType: "Choose a JPEG, PNG, WebP, or GIF image",
+                avatarTooLarge: "The source image must be under 10 MB",
+                avatarLoadFailed: "This image could not be loaded",
+                avatarSaveFailed: "Failed to save avatar",
+                avatarSaved: "Avatar saved"
             }
         };
 
@@ -127,6 +161,152 @@ createApp({
             }
         ]);
         const connectionLabel = computed(() => t(connectionMode.value));
+        const cropImageStyle = computed(() => ({
+            width: `${avatarBaseSize.value.width}px`,
+            height: `${avatarBaseSize.value.height}px`,
+            transform: `translate(-50%, -50%) translate(${avatarPan.value.x}px, ${avatarPan.value.y}px) scale(${avatarZoom.value})`
+        }));
+
+        let selectedAvatarImage = null;
+        let avatarObjectUrl = "";
+        let avatarDrag = null;
+
+        const chooseAvatarFile = () => avatarInput.value?.click();
+
+        const revokeAvatarObjectUrl = () => {
+            if (avatarObjectUrl) URL.revokeObjectURL(avatarObjectUrl);
+            avatarObjectUrl = "";
+        };
+
+        const closeAvatarEditor = () => {
+            showAvatarEditor.value = false;
+            avatarError.value = "";
+            selectedAvatarImage = null;
+            revokeAvatarObjectUrl();
+            avatarSourceUrl.value = "";
+        };
+
+        const handleAvatarFile = (event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (!file) return;
+            if (!/^image\/(jpeg|png|webp|gif)$/.test(file.type)) {
+                errorMsg.value = t("invalidAvatarType");
+                return;
+            }
+            if (file.size > 10 * 1024 * 1024) {
+                errorMsg.value = t("avatarTooLarge");
+                return;
+            }
+            revokeAvatarObjectUrl();
+            avatarObjectUrl = URL.createObjectURL(file);
+            avatarSourceUrl.value = avatarObjectUrl;
+            avatarZoom.value = 1;
+            avatarPan.value = { x: 0, y: 0 };
+            avatarError.value = "";
+            showAvatarEditor.value = true;
+        };
+
+        const initializeAvatarCrop = (event) => {
+            selectedAvatarImage = event.target;
+            const naturalWidth = selectedAvatarImage.naturalWidth;
+            const naturalHeight = selectedAvatarImage.naturalHeight;
+            if (!naturalWidth || !naturalHeight) {
+                avatarError.value = t("avatarLoadFailed");
+                return;
+            }
+            const stageSize = cropStage.value?.clientWidth || 280;
+            const scale = Math.max(stageSize / naturalWidth, stageSize / naturalHeight);
+            avatarBaseSize.value = {
+                width: naturalWidth * scale,
+                height: naturalHeight * scale,
+                scale
+            };
+            avatarZoom.value = 1;
+            avatarPan.value = { x: 0, y: 0 };
+        };
+
+        const clampAvatarPan = () => {
+            const stageSize = cropStage.value?.clientWidth || 280;
+            const maxX = Math.max(0, (avatarBaseSize.value.width * avatarZoom.value - stageSize) / 2);
+            const maxY = Math.max(0, (avatarBaseSize.value.height * avatarZoom.value - stageSize) / 2);
+            avatarPan.value = {
+                x: Math.max(-maxX, Math.min(maxX, avatarPan.value.x)),
+                y: Math.max(-maxY, Math.min(maxY, avatarPan.value.y))
+            };
+        };
+
+        const startAvatarDrag = (event) => {
+            if (!selectedAvatarImage) return;
+            event.currentTarget.setPointerCapture?.(event.pointerId);
+            avatarDrag = {
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startY: event.clientY,
+                originX: avatarPan.value.x,
+                originY: avatarPan.value.y
+            };
+        };
+
+        const moveAvatarDrag = (event) => {
+            if (!avatarDrag || avatarDrag.pointerId !== event.pointerId) return;
+            avatarPan.value = {
+                x: avatarDrag.originX + event.clientX - avatarDrag.startX,
+                y: avatarDrag.originY + event.clientY - avatarDrag.startY
+            };
+            clampAvatarPan();
+        };
+
+        const endAvatarDrag = (event) => {
+            if (!avatarDrag || avatarDrag.pointerId !== event.pointerId) return;
+            event.currentTarget.releasePointerCapture?.(event.pointerId);
+            avatarDrag = null;
+        };
+
+        const canvasToBlob = (canvas, quality) => new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+
+        const saveAvatar = async () => {
+            if (!selectedAvatarImage || avatarSaving.value) return;
+            avatarSaving.value = true;
+            avatarError.value = "";
+            try {
+                const outputSize = 256;
+                const stageSize = cropStage.value?.clientWidth || 280;
+                const canvas = document.createElement("canvas");
+                canvas.width = outputSize;
+                canvas.height = outputSize;
+                const context = canvas.getContext("2d");
+                context.fillStyle = "#ffffff";
+                context.fillRect(0, 0, outputSize, outputSize);
+                const outputScale = avatarBaseSize.value.scale * avatarZoom.value * outputSize / stageSize;
+                const width = selectedAvatarImage.naturalWidth * outputScale;
+                const height = selectedAvatarImage.naturalHeight * outputScale;
+                const x = outputSize / 2 + avatarPan.value.x * outputSize / stageSize - width / 2;
+                const y = outputSize / 2 + avatarPan.value.y * outputSize / stageSize - height / 2;
+                context.drawImage(selectedAvatarImage, x, y, width, height);
+                let blob = await canvasToBlob(canvas, 0.88);
+                if (blob?.size > 400 * 1024) blob = await canvasToBlob(canvas, 0.75);
+                if (!blob) throw new Error("canvas-export-failed");
+
+                const form = new FormData();
+                form.append("avatar", blob, "avatar.jpg");
+                const response = await axios.post(`${apiBase}/user/avatar`, form);
+                if (response.data.code !== 200 || !response.data.data?.avatarUrl) {
+                    throw new Error(response.data.message || t("avatarSaveFailed"));
+                }
+                avatarUrl.value = response.data.data.avatarUrl;
+                infoMsg.value = t("avatarSaved");
+                closeAvatarEditor();
+                await loadRooms();
+                setTimeout(() => {
+                    if (infoMsg.value === t("avatarSaved")) infoMsg.value = "";
+                }, 3000);
+            } catch (error) {
+                avatarError.value = error.response?.data?.message || error.message || t("avatarSaveFailed");
+            } finally {
+                avatarSaving.value = false;
+            }
+        };
 
         const applyLanguage = () => {
             document.documentElement.lang = language.value === "zh" ? "zh-CN" : "en";
@@ -375,6 +555,7 @@ createApp({
                 }
                 const currentUser = res.data.data || {};
                 username.value = currentUser.username || "";
+                avatarUrl.value = currentUser.avatarUrl || "";
                 if (currentUser.id) localStorage.setItem("userId", currentUser.id);
                 if (currentUser.username) localStorage.setItem("username", currentUser.username);
                 console.info("[UNO-LOBBY] init currentUser ok", currentUser.username || "");
@@ -502,6 +683,15 @@ createApp({
 
         return {
             username,
+            avatarUrl,
+            avatarInput,
+            cropStage,
+            showAvatarEditor,
+            avatarSourceUrl,
+            avatarZoom,
+            avatarSaving,
+            avatarError,
+            cropImageStyle,
             rooms,
             showCreate,
             maxPlayers,
@@ -524,6 +714,15 @@ createApp({
             timeOptions,
             modeOptions,
             drawPileRuleOptions,
+            chooseAvatarFile,
+            handleAvatarFile,
+            initializeAvatarCrop,
+            clampAvatarPan,
+            startAvatarDrag,
+            moveAvatarDrag,
+            endAvatarDrag,
+            closeAvatarEditor,
+            saveAvatar,
             createRoom,
             joinRoom,
             goToAdmin,

@@ -22,6 +22,11 @@
         <header class="top-bar">
             <div class="logo-small">UNO</div>
             <div class="user-info">
+                <button class="profile-avatar-button" type="button" @click="chooseAvatarFile" :title="t('changeAvatar')" :aria-label="t('changeAvatar')">
+                    <img v-if="avatarUrl" :src="avatarUrl" alt="">
+                    <span v-else>{{ username.charAt(0).toUpperCase() }}</span>
+                    <span class="avatar-edit-badge" aria-hidden="true">✎</span>
+                </button>
                 <span class="username">{{ username }}</span>
                 <button class="lang-toggle" @click="toggleLanguage">{{ languageLabel }}</button>
                 <button v-if="isAdmin" class="btn-admin" @click="goToAdmin">{{ t("admin") }}</button>
@@ -54,7 +59,13 @@
                         </div>
                     </div>
                     <div class="room-action">
-                        <span class="room-players">{{ t("host") }}: {{ room.host?.username || t("unknown") }}</span>
+                        <div class="room-host">
+                            <span class="room-host-avatar">
+                                <img v-if="room.host?.avatarUrl" :src="room.host.avatarUrl" alt="">
+                                <span v-else>{{ (room.host?.username || '?').charAt(0).toUpperCase() }}</span>
+                            </span>
+                            <span class="room-players">{{ t("host") }}: {{ room.host?.username || t("unknown") }}</span>
+                        </div>
                         <button class="btn-join">{{ t("join") }}</button>
                     </div>
                 </div>
@@ -107,6 +118,48 @@
                 <div class="modal-actions">
                     <button class="btn-cancel" @click="showCreate = false">{{ t("cancel") }}</button>
                     <button class="btn-primary" @click="createRoom">{{ t("create") }}</button>
+                </div>
+            </div>
+        </div>
+
+        <input
+            ref="avatarInput"
+            class="avatar-file-input"
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            @change="handleAvatarFile"
+        >
+
+        <div v-if="showAvatarEditor" class="modal-overlay avatar-modal" @click.self="closeAvatarEditor">
+            <div class="modal-card avatar-editor-card" role="dialog" aria-modal="true" :aria-label="t('cropAvatar')">
+                <h3>{{ t("cropAvatar") }}</h3>
+                <p class="avatar-help">{{ t("cropHelp") }}</p>
+                <div
+                    ref="cropStage"
+                    class="avatar-crop-stage"
+                    @pointerdown="startAvatarDrag"
+                    @pointermove="moveAvatarDrag"
+                    @pointerup="endAvatarDrag"
+                    @pointercancel="endAvatarDrag"
+                >
+                    <img
+                        :src="avatarSourceUrl"
+                        :style="cropImageStyle"
+                        alt=""
+                        draggable="false"
+                        @load="initializeAvatarCrop"
+                    >
+                    <span class="avatar-crop-mask" aria-hidden="true"></span>
+                </div>
+                <label class="avatar-zoom-label" for="avatarZoom">{{ t("zoom") }}</label>
+                <input id="avatarZoom" v-model.number="avatarZoom" class="avatar-zoom" type="range" min="1" max="3" step="0.01" @input="clampAvatarPan">
+                <p v-if="avatarError" class="avatar-error" role="alert">{{ avatarError }}</p>
+                <div class="modal-actions avatar-actions">
+                    <button class="btn-cancel" type="button" @click="chooseAvatarFile">{{ t("chooseAnother") }}</button>
+                    <button class="btn-cancel" type="button" @click="closeAvatarEditor">{{ t("cancel") }}</button>
+                    <button class="btn-primary" type="button" :disabled="avatarSaving" @click="saveAvatar">
+                        {{ avatarSaving ? t("savingAvatar") : t("saveAvatar") }}
+                    </button>
                 </div>
             </div>
         </div>

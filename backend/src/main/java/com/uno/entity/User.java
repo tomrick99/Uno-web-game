@@ -6,7 +6,7 @@ import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "uno_user")
-@JsonIgnoreProperties({"password", "createdAt"})
+@JsonIgnoreProperties({"password", "createdAt", "avatarData", "avatarContentType", "avatarUpdatedAt"})
 public class User {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -20,6 +20,17 @@ public class User {
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
+
+    @Lob
+    @Basic(fetch = FetchType.LAZY)
+    @Column(name = "avatar_data", columnDefinition = "LONGBLOB")
+    private byte[] avatarData;
+
+    @Column(name = "avatar_content_type", length = 32)
+    private String avatarContentType;
+
+    @Column(name = "avatar_updated_at")
+    private LocalDateTime avatarUpdatedAt;
 
     @PrePersist
     protected void onCreate() {
@@ -46,4 +57,22 @@ public class User {
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+
+    public byte[] getAvatarData() { return avatarData; }
+    public void setAvatarData(byte[] avatarData) { this.avatarData = avatarData; }
+
+    public String getAvatarContentType() { return avatarContentType; }
+    public void setAvatarContentType(String avatarContentType) { this.avatarContentType = avatarContentType; }
+
+    public LocalDateTime getAvatarUpdatedAt() { return avatarUpdatedAt; }
+    public void setAvatarUpdatedAt(LocalDateTime avatarUpdatedAt) { this.avatarUpdatedAt = avatarUpdatedAt; }
+
+    @Transient
+    public String getAvatarUrl() {
+        if (id == null || avatarData == null || avatarData.length == 0 || avatarUpdatedAt == null) {
+            return null;
+        }
+        long version = avatarUpdatedAt.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+        return "/api/user/" + id + "/avatar?v=" + version;
+    }
 }
