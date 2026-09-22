@@ -5,6 +5,7 @@ import com.uno.entity.GamePlayer;
 import com.uno.entity.Room;
 import com.uno.entity.User;
 import com.uno.entity.enums.GameMode;
+import com.uno.entity.enums.DrawPileRule;
 import com.uno.entity.enums.GameStatus;
 import com.uno.entity.enums.RoomStatus;
 import com.uno.repository.GamePlayerRepository;
@@ -48,6 +49,33 @@ class RoomServiceAdminUpdateTest {
         assertEquals(16, room.getTotalRounds());
         assertEquals(15, room.getRoundTimeLimitMinutes());
         assertEquals(GameMode.NO_MERCY, room.getGameMode());
+    }
+
+    @Test
+    void noMercyRoomKeepsFiniteDrawPileRule() {
+        Room room = room(1L, RoomStatus.WAITING, 4);
+        when(roomRepository.findById(1L)).thenReturn(Optional.of(room));
+        when(roomRepository.save(any(Room.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(gameRepository.findByRoom(room)).thenReturn(List.of());
+
+        Map<String, Object> state = roomService.updateRoomConfigByAdmin(
+                1L, 4, 8, 10, GameMode.NO_MERCY, DrawPileRule.FINITE_DRAW_PILE);
+
+        assertEquals(DrawPileRule.FINITE_DRAW_PILE, room.getDrawPileRule());
+        assertEquals(DrawPileRule.FINITE_DRAW_PILE.name(), state.get("drawPileRule"));
+    }
+
+    @Test
+    void classicRoomAlwaysUsesAutoRefill() {
+        Room room = room(1L, RoomStatus.WAITING, 4);
+        when(roomRepository.findById(1L)).thenReturn(Optional.of(room));
+        when(roomRepository.save(any(Room.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(gameRepository.findByRoom(room)).thenReturn(List.of());
+
+        roomService.updateRoomConfigByAdmin(
+                1L, 4, 8, 10, GameMode.CLASSIC, DrawPileRule.FINITE_DRAW_PILE);
+
+        assertEquals(DrawPileRule.AUTO_REFILL, room.getDrawPileRule());
     }
 
     @Test

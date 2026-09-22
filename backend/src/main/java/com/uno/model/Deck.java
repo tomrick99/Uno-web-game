@@ -2,6 +2,7 @@ package com.uno.model;
 
 import com.uno.entity.enums.CardColor;
 import com.uno.entity.enums.CardType;
+import com.uno.entity.enums.DrawPileRule;
 import com.uno.entity.enums.GameMode;
 
 import java.util.ArrayList;
@@ -12,12 +13,18 @@ public class Deck {
 
     private List<Card> drawPile = new ArrayList<>();
     private List<Card> discardPile = new ArrayList<>();
+    private final DrawPileRule drawPileRule;
 
     public Deck() {
         this(GameMode.CLASSIC);
     }
 
     public Deck(GameMode gameMode) {
+        this(gameMode, DrawPileRule.AUTO_REFILL);
+    }
+
+    public Deck(GameMode gameMode, DrawPileRule drawPileRule) {
+        this.drawPileRule = drawPileRule == null ? DrawPileRule.AUTO_REFILL : drawPileRule;
         initializeDeck(gameMode == null ? GameMode.CLASSIC : gameMode);
         shuffle();
     }
@@ -27,6 +34,11 @@ public class Deck {
     }
 
     public Deck(List<Card> drawPile, List<Card> discardPile, GameMode gameMode) {
+        this(drawPile, discardPile, gameMode, DrawPileRule.AUTO_REFILL);
+    }
+
+    public Deck(List<Card> drawPile, List<Card> discardPile, GameMode gameMode, DrawPileRule drawPileRule) {
+        this.drawPileRule = drawPileRule == null ? DrawPileRule.AUTO_REFILL : drawPileRule;
         this.drawPile = new ArrayList<>();
         this.discardPile = new ArrayList<>();
 
@@ -42,7 +54,7 @@ public class Deck {
         }
 
         // A restored game may legitimately have an empty draw pile. Keep the
-        // persisted state intact so drawCard() can recycle the discard pile.
+        // persisted state intact so drawCard() can apply the configured rule.
     }
 
     private void initializeDeck(GameMode gameMode) {
@@ -105,7 +117,7 @@ public class Deck {
     }
 
     public Card drawCard() {
-        if (drawPile.isEmpty()) {
+        if (drawPile.isEmpty() && drawPileRule == DrawPileRule.AUTO_REFILL) {
             recycleDiscardPile();
         }
         if (drawPile.isEmpty()) {

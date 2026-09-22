@@ -48,6 +48,7 @@
                             <div>人数：{{ room.playerCount }} / {{ room.maxPlayers }}</div>
                             <div>时间：{{ room.roundTimeLimitMinutes }} 分钟</div>
                             <div>模式：{{ modeLabel(room.gameMode) }}</div>
+                            <div v-if="room.gameMode === 'NO_MERCY'">抽牌堆：{{ drawPileRuleLabel(room.drawPileRule) }}</div>
                             <div>创建时间：{{ formatTime(room.createdAt) }}</div>
                         </div>
                         <div class="player-list">
@@ -78,6 +79,20 @@
                             <option value="CLASSIC">经典</option>
                             <option value="NO_MERCY">No Mercy</option>
                         </select>
+
+                        <template v-if="editForm.gameMode === 'NO_MERCY'">
+                            <label>抽牌堆耗尽规则</label>
+                            <select v-model="editForm.drawPileRule">
+                                <option value="AUTO_REFILL">Auto Refill（自动补充）</option>
+                                <option value="FINITE_DRAW_PILE">Finite Draw Pile（耗尽即结束）</option>
+                            </select>
+                            <p class="draw-rule-help" v-if="editForm.drawPileRule === 'AUTO_REFILL'">
+                                抽牌堆用完后使用弃牌堆继续；该模式可能使对局持续更久。
+                            </p>
+                            <p class="draw-rule-help" v-else>
+                                抽牌堆用完即结束，剩余手牌最少的玩家胜出。
+                            </p>
+                        </template>
                     </div>
                     <p class="edit-hint">只有等待中的房间可以编辑；已开局房间请删除后重新创建。</p>
                     <div class="modal-actions">

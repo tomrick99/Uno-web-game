@@ -9,6 +9,7 @@ import com.uno.entity.Room;
 import com.uno.entity.User;
 import com.uno.entity.enums.CardColor;
 import com.uno.entity.enums.CardType;
+import com.uno.entity.enums.DrawPileRule;
 import com.uno.entity.enums.GameStatus;
 import com.uno.entity.enums.GameMode;
 import com.uno.entity.enums.PendingDrawType;
@@ -91,12 +92,25 @@ public class GameService {
                                                        GameMode gameMode,
                                                        Long actorUserId,
                                                        String actorName) {
+        return updateRoomConfigByAdmin(roomId, maxPlayers, totalRounds, roundTimeLimitMinutes, gameMode,
+                DrawPileRule.AUTO_REFILL, actorUserId, actorName);
+    }
+
+    public Map<String, Object> updateRoomConfigByAdmin(Long roomId,
+                                                       int maxPlayers,
+                                                       int totalRounds,
+                                                       int roundTimeLimitMinutes,
+                                                       GameMode gameMode,
+                                                       DrawPileRule drawPileRule,
+                                                       Long actorUserId,
+                                                       String actorName) {
         return withRoomLock(roomId, () -> doUpdateRoomConfigByAdmin(
                 roomId,
                 maxPlayers,
                 totalRounds,
                 roundTimeLimitMinutes,
                 gameMode,
+                drawPileRule,
                 actorUserId,
                 actorName));
     }
@@ -265,6 +279,7 @@ public class GameService {
         state.put("totalRounds", game.getRoom().getTotalRounds());
         state.put("roundTimeLimitMinutes", game.getRoom().getRoundTimeLimitMinutes());
         state.put("gameMode", resolveGameMode(game).name());
+        state.put("drawPileRule", resolveDrawPileRule(game).name());
         state.put("status", game.getStatus().name());
         Card topCard = getTopDiscard(game);
         CardColor effectiveColor = resolveCurrentColor(game.getCurrentColor(), topCard);
@@ -282,10 +297,10 @@ public class GameService {
 
         List<Map<String, Object>> players = new ArrayList<>();
         List<Long> rematchReadyPlayerIds = new ArrayList<>();
-        Long winnerId = null;
+        Long winnerId = game.getWinnerId();
         for (GamePlayer gp : gamePlayerRepository.findByGameOrderBySeatIndexAsc(game)) {
             List<Card> hand = sortHandCards(gp.getHandCards());
-            if (game.getStatus() == GameStatus.FINISHED && hand.isEmpty()) {
+            if (winnerId == null && game.getStatus() == GameStatus.FINISHED && hand.isEmpty()) {
                 winnerId = gp.getUser().getId();
             }
             if (gp.isRematchReady()) {
@@ -410,6 +425,7 @@ public class GameService {
                                                           int totalRounds,
                                                           int roundTimeLimitMinutes,
                                                           GameMode gameMode,
+                                                          DrawPileRule drawPileRule,
                                                           Long actorUserId,
                                                           String actorName) {
         roomService.updateRoomConfigByAdmin(
@@ -417,7 +433,8 @@ public class GameService {
                 maxPlayers,
                 totalRounds,
                 roundTimeLimitMinutes,
-                gameMode);
+                gameMode,
+                drawPileRule);
 
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
@@ -530,9 +547,11 @@ public class GameService {
         if (gameFinished) {
             game.setStatus(GameStatus.FINISHED);
             game.setCurrentTurn(null);
+            game.setWinnerId(userId);
             clearPendingDraw(game);
         } else {
             autoPenaltyPlayer = resolveUnstackablePenalty(game, players);
+            gameFinished = game.getStatus() == GameStatus.FINISHED;
         }
         gameRepository.save(game);
         long version = bumpStateVersion(game.getRoom().getId());
@@ -555,14 +574,16 @@ public class GameService {
         List<PrivateHandPatchDelivery> privateHandPatches = new ArrayList<>();
         if (gameFinished) {
             roomService.closeRoom(game.getRoom());
+            Long winnerId = game.getWinnerId();
+            String winnerName = resolveWinnerName(players, winnerId);
             int playerCount = players.size();
-            log.info("[UNO] game finished gameId={} roomId={} winner={}", game.getId(), game.getRoom().getId(), userId);
+            log.info("[UNO] game finished gameId={} roomId={} winner={}", game.getId(), game.getRoom().getId(), winnerId);
             log.info("[UNO] broadcasting FINISHED to /topic/games/{}", game.getId());
             log.info("[UNO] broadcasting room update to /topic/rooms/{}", game.getRoom().getId());
             log.info("[UNO] broadcast game finished gameId={} roomId={} players={}", game.getId(), game.getRoom().getId(), playerCount);
 
             finishedRoomState = getRoomStateWithVersion(game.getRoom(), game);
-            publicPatch = buildPublicGamePatch(game, players, "GAME_FINISHED", userId, user.getUsername(), user.getUsername() + " wins!");
+            publicPatch = buildPublicGamePatch(game, players, "GAME_FINISHED", userId, user.getUsername(), winnerName + " wins!");
         } else {
             String display = card.type() == CardType.NUMBER ? String.valueOf(card.value()) : card.type().name();
             publicPatch = buildPublicGamePatch(game, players, "CARD_PLAYED", userId, user.getUsername(), user.getUsername() + " played " + display);
@@ -576,7 +597,7 @@ public class GameService {
         List<PrivateHandPatchDelivery> deliveries = List.copyOf(privateHandPatches);
         publishAfterCommit("playCard", () -> {
             if (roomState != null) {
-                wsService.broadcastRoomState(roomState, "GAME_FINISHED", user.getUsername() + " 赢得了本局");
+                wsService.broadcastRoomState(roomState, "GAME_FINISHED", resolveWinnerName(players, game.getWinnerId()) + " 赢得了本局");
                 wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Game finished");
             }
             wsService.broadcastPublicGamePatch(publicPatch);
@@ -607,18 +628,22 @@ public class GameService {
 
         Deck deck = getDeck(game);
         Card drawn = deck.drawCard();
-        if (drawn == null) {
-            throw new RuntimeException("牌堆已空");
+        if (drawn != null) {
+            List<Card> hand = player.getHandCards();
+            hand.add(drawn);
+            setSortedHand(player, hand);
+            player.setSaidUno(false);
+            gamePlayerRepository.save(player);
         }
 
-        List<Card> hand = player.getHandCards();
-        hand.add(drawn);
-        setSortedHand(player, hand);
-        player.setSaidUno(false);
-        gamePlayerRepository.save(player);
-
         saveDeckState(game, deck);
-        moveToNextPlayer(game);
+        boolean gameFinished = finishGameIfFinitePileExhausted(game, deck);
+        if (drawn == null && !gameFinished) {
+            throw new RuntimeException("牌堆已空");
+        }
+        if (!gameFinished) {
+            moveToNextPlayer(game);
+        }
         gameRepository.save(game);
         long version = bumpStateVersion(game.getRoom().getId());
         log.info("[SYNC] action=drawCardApplied roomId={} gameId={} userId={} drawnCard={} newTurn={} currentPlayerIndex={} direction={} pendingPenalty={} gameStatus={} version={}",
@@ -634,13 +659,22 @@ public class GameService {
                 version);
 
         List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
-        PublicGamePatch publicPatch = buildPublicGamePatch(game, players, "CARD_DRAWN_PUBLIC", userId, user.getUsername(), user.getUsername() + " drew a card");
+        String eventType = gameFinished ? "GAME_FINISHED" : "CARD_DRAWN_PUBLIC";
+        String message = gameFinished
+                ? "Draw pile exhausted. " + resolveWinnerName(players, game.getWinnerId()) + " wins with the fewest cards."
+                : user.getUsername() + " drew a card";
+        PublicGamePatch publicPatch = buildPublicGamePatch(game, players, eventType, userId, user.getUsername(), message);
         PrivateHandPatchDelivery privateHandPatch = buildPrivateHandPatchDelivery(game, player, "HAND_UPDATED");
+        Map<String, Object> roomState = gameFinished ? getRoomStateWithVersion(game.getRoom(), game) : null;
         publishAfterCommit("drawCard", () -> {
+            if (roomState != null) {
+                wsService.broadcastRoomState(roomState, "GAME_FINISHED", message);
+                wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Game finished");
+            }
             wsService.broadcastPublicGamePatch(publicPatch);
             sendPrivateHandPatch(privateHandPatch);
         });
-        return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "CARD_DRAWN_PUBLIC");
+        return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), eventType);
     }
 
     private Map<String, Object> doDrawPenalty(Long gameId, Long userId) {
@@ -665,7 +699,10 @@ public class GameService {
         drawCardsToPlayer(game, player, drawCount);
 
         clearPendingDraw(game);
-        moveToNextPlayer(game);
+        boolean gameFinished = game.getStatus() == GameStatus.FINISHED;
+        if (!gameFinished) {
+            moveToNextPlayer(game);
+        }
         gameRepository.save(game);
         long version = bumpStateVersion(game.getRoom().getId());
 
@@ -681,13 +718,22 @@ public class GameService {
                 game.getStatus(),
                 version);
         List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
-        PublicGamePatch publicPatch = buildPublicGamePatch(game, players, "PENALTY_UPDATED", userId, user.getUsername(), user.getUsername() + " drew " + drawCount + " penalty cards");
+        String eventType = gameFinished ? "GAME_FINISHED" : "PENALTY_UPDATED";
+        String message = gameFinished
+                ? "Draw pile exhausted. " + resolveWinnerName(players, game.getWinnerId()) + " wins with the fewest cards."
+                : user.getUsername() + " drew " + drawCount + " penalty cards";
+        PublicGamePatch publicPatch = buildPublicGamePatch(game, players, eventType, userId, user.getUsername(), message);
         PrivateHandPatchDelivery privateHandPatch = buildPrivateHandPatchDelivery(game, player, "HAND_UPDATED");
+        Map<String, Object> roomState = gameFinished ? getRoomStateWithVersion(game.getRoom(), game) : null;
         publishAfterCommit("drawPenalty", () -> {
+            if (roomState != null) {
+                wsService.broadcastRoomState(roomState, "GAME_FINISHED", message);
+                wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Game finished");
+            }
             wsService.broadcastPublicGamePatch(publicPatch);
             sendPrivateHandPatch(privateHandPatch);
         });
-        return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "PENALTY_UPDATED");
+        return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), eventType);
     }
 
     private Map<String, Object> doReadyForRematch(Long gameId, Long userId) {
@@ -919,12 +965,13 @@ public class GameService {
     }
 
     private void startGame(Game game) {
-        startGame(game, new Deck(resolveGameMode(game)));
+        startGame(game, new Deck(resolveGameMode(game), resolveDrawPileRule(game)));
     }
 
     void startGame(Game game, Deck deck) {
         game.setStatus(GameStatus.PLAYING);
         game.setClockwise(true);
+        game.setWinnerId(null);
         clearPendingDraw(game);
         clearRematchReady(game);
         dealCards(game, deck);
@@ -1164,7 +1211,9 @@ public class GameService {
         int drawCount = game.getPendingDrawCount();
         drawCardsToPlayer(game, target, drawCount);
         clearPendingDraw(game);
-        moveToNextPlayer(game);
+        if (game.getStatus() != GameStatus.FINISHED) {
+            moveToNextPlayer(game);
+        }
         log.info("[UNO] auto penalty player={} drawCount={} nextPlayer={}",
                 target.getUser().getId(), drawCount, game.getCurrentTurn());
         return target;
@@ -1396,14 +1445,16 @@ public class GameService {
         List<Card> hand = player.getHandCards();
         for (int i = 0; i < count; i++) {
             Card drawn = deck.drawCard();
-            if (drawn != null) {
-                hand.add(drawn);
+            if (drawn == null) {
+                break;
             }
+            hand.add(drawn);
         }
         setSortedHand(player, hand);
         player.setSaidUno(false);
         gamePlayerRepository.save(player);
         saveDeckState(game, deck);
+        finishGameIfFinitePileExhausted(game, deck);
     }
 
     private void reseatPlayers(List<GamePlayer> players) {
@@ -1511,7 +1562,51 @@ public class GameService {
     private Deck getDeck(Game game) {
         List<Card> drawPile = fromJson(game.getDrawPileJson());
         List<Card> discardPile = fromJson(game.getDiscardPileJson());
-        return new Deck(drawPile, discardPile, resolveGameMode(game));
+        return new Deck(drawPile, discardPile, resolveGameMode(game), resolveDrawPileRule(game));
+    }
+
+    private DrawPileRule resolveDrawPileRule(Game game) {
+        if (!isNoMercy(game)
+                || game.getRoom().getDrawPileRule() == null) {
+            return DrawPileRule.AUTO_REFILL;
+        }
+        return game.getRoom().getDrawPileRule();
+    }
+
+    private boolean finishGameIfFinitePileExhausted(Game game, Deck deck) {
+        if (game == null
+                || deck == null
+                || game.getStatus() != GameStatus.PLAYING
+                || resolveDrawPileRule(game) != DrawPileRule.FINITE_DRAW_PILE
+                || deck.getDrawPileSize() > 0) {
+            return false;
+        }
+
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        GamePlayer winner = players.stream()
+                .min(Comparator
+                        .comparingInt((GamePlayer player) -> player.getHandCards() == null ? 0 : player.getHandCards().size())
+                        .thenComparingInt(GamePlayer::getSeatIndex))
+                .orElse(null);
+        game.setWinnerId(winner != null ? winner.getUser().getId() : null);
+        game.setStatus(GameStatus.FINISHED);
+        game.setCurrentTurn(null);
+        clearPendingDraw(game);
+        roomService.closeRoom(game.getRoom());
+        log.info("[UNO] finite draw pile exhausted gameId={} roomId={} winner={}",
+                game.getId(), game.getRoom().getId(), game.getWinnerId());
+        return true;
+    }
+
+    private String resolveWinnerName(List<GamePlayer> players, Long winnerId) {
+        if (winnerId == null) {
+            return "No player";
+        }
+        return players.stream()
+                .filter(player -> winnerId.equals(player.getUser().getId()))
+                .map(player -> player.getUser().getUsername())
+                .findFirst()
+                .orElse("Player");
     }
 
     private void saveDeckState(Game game, Deck deck) {
@@ -1593,7 +1688,7 @@ public class GameService {
             Long currentPlayerId = game.getCurrentTurn();
             Integer currentPlayerIndex = resolveCurrentPlayerIndex(game);
             String currentPlayerName = null;
-            Long winnerId = null;
+            Long winnerId = game.getWinnerId();
             List<Long> rematchReadyPlayerIds = new ArrayList<>();
             List<PublicPlayerInfo> publicPlayers = new ArrayList<>();
             for (GamePlayer player : players) {
@@ -1601,7 +1696,7 @@ public class GameService {
                 if (currentPlayer) {
                     currentPlayerName = player.getUser().getUsername();
                 }
-                if (game.getStatus() == GameStatus.FINISHED && player.getHandCards().isEmpty()) {
+                if (winnerId == null && game.getStatus() == GameStatus.FINISHED && player.getHandCards().isEmpty()) {
                     winnerId = player.getUser().getId();
                 }
                 if (player.isRematchReady()) {

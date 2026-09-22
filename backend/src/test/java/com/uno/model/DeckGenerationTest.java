@@ -1,6 +1,7 @@
 package com.uno.model;
 
 import com.uno.entity.enums.CardType;
+import com.uno.entity.enums.DrawPileRule;
 import com.uno.entity.enums.GameMode;
 import org.junit.jupiter.api.Test;
 
@@ -11,6 +12,7 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DeckGenerationTest {
@@ -73,6 +75,22 @@ class DeckGenerationTest {
         assertEquals(1, deck.getDiscardPile().size());
         assertSame(topDiscard, deck.getTopDiscard());
         assertEquals(3, deck.getDrawPileSize() + deck.getDiscardPile().size() + 1);
+    }
+
+    @Test
+    void finiteDrawPileDoesNotRecycleDiscardPile() {
+        Card discarded = new Card(com.uno.entity.enums.CardColor.RED, CardType.NUMBER, 1);
+        Card topDiscard = new Card(com.uno.entity.enums.CardColor.GREEN, CardType.NUMBER, 3);
+        Deck deck = new Deck(
+                List.of(),
+                List.of(discarded, topDiscard),
+                GameMode.NO_MERCY,
+                DrawPileRule.FINITE_DRAW_PILE);
+
+        assertNull(deck.drawCard());
+        assertEquals(0, deck.getDrawPileSize());
+        assertEquals(2, deck.getDiscardPile().size());
+        assertSame(topDiscard, deck.getTopDiscard());
     }
 
     private long count(Deck deck, CardType type) {

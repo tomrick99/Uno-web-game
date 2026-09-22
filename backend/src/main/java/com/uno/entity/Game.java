@@ -56,6 +56,9 @@ public class Game {
     @Column(name = "last_penalty_player_id")
     private Long lastPenaltyPlayerId;
 
+    @Column(name = "winner_id")
+    private Long winnerId;
+
     @Column(name = "draw_pile", columnDefinition = "TEXT")
     private String drawPileJson;
 
@@ -104,6 +107,9 @@ public class Game {
 
     public Long getLastPenaltyPlayerId() { return lastPenaltyPlayerId; }
     public void setLastPenaltyPlayerId(Long lastPenaltyPlayerId) { this.lastPenaltyPlayerId = lastPenaltyPlayerId; }
+
+    public Long getWinnerId() { return winnerId; }
+    public void setWinnerId(Long winnerId) { this.winnerId = winnerId; }
 
     public String getDrawPileJson() { return drawPileJson; }
     public void setDrawPileJson(String drawPileJson) { this.drawPileJson = drawPileJson; }

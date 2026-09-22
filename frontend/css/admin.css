@@ -179,6 +179,13 @@ body {
     color: #111;
 }
 
+.draw-rule-help {
+    margin: -2px 0 4px;
+    color: var(--yellow);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
 .edit-hint {
     margin: 14px 0 20px;
     color: var(--text-secondary);

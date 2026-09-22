@@ -37,6 +37,10 @@
                     <span class="status-label">{{ t("mode") }}</span>
                     <span>{{ gameModeLabel }}</span>
                 </div>
+                <div v-if="gameMode === 'NO_MERCY'" class="status-chip">
+                    <span class="status-label">{{ t("drawPile") }}</span>
+                    <span>{{ drawPileRuleLabel }}</span>
+                </div>
                 <div class="status-chip">
                     <span class="status-label">{{ t("players") }}</span>
                     <span>{{ playerCount }}/{{ maxPlayers }}</span>
@@ -245,6 +249,24 @@
                 <p class="result-subtitle">
                     {{ gameResult.win ? t("winSubtitle") : t("loseSubtitle") }}
                 </p>
+                <section v-if="gameResult.showFinalRanking" class="final-ranking" :aria-label="t('finalRanking')">
+                    <h3>{{ t("finalRanking") }}</h3>
+                    <ol class="ranking-list">
+                        <li
+                            v-for="player in gameResult.ranking"
+                            :key="player.userId"
+                            class="ranking-row"
+                            :class="{ champion: player.isWinner, 'current-user': player.isCurrentUser }"
+                        >
+                            <span class="ranking-position">{{ player.rank }}</span>
+                            <span class="ranking-player">
+                                <strong>{{ player.username }}</strong>
+                                <small v-if="player.isCurrentUser">{{ t("me") }}</small>
+                            </span>
+                            <span class="ranking-cards">{{ player.handCount }} {{ t("cardsUnit") }}</span>
+                        </li>
+                    </ol>
+                </section>
                 <p v-if="gameResult.statusText" class="result-status">{{ gameResult.statusText }}</p>
                 <div class="result-actions">
                     <button id="endReturnLobbyBtn" class="btn-secondary">{{ t("backToLobby") }}</button>

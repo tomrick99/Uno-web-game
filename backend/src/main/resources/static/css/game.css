@@ -1072,6 +1072,9 @@
 
 .result-card {
     text-align: center;
+    max-width: 520px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
 }
 
 .result-card h2 {
@@ -1091,6 +1094,95 @@
     font-size: 14px;
 }
 
+.final-ranking {
+    margin: 0 0 20px;
+    text-align: left;
+}
+
+.final-ranking h3 {
+    margin-bottom: 10px;
+    color: var(--text-primary);
+    font-size: 16px;
+    text-align: center;
+}
+
+.ranking-list {
+    display: grid;
+    max-height: min(300px, 38vh);
+    gap: 8px;
+    margin: 0;
+    padding: 2px;
+    overflow-y: auto;
+    list-style: none;
+}
+
+.ranking-row {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    min-height: 48px;
+    padding: 8px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.ranking-row.champion {
+    border-color: rgba(241, 196, 15, 0.85);
+    background: linear-gradient(90deg, rgba(241, 196, 15, 0.2), rgba(241, 196, 15, 0.07));
+    box-shadow: 0 0 16px rgba(241, 196, 15, 0.18);
+}
+
+.ranking-row.current-user {
+    outline: 2px solid rgba(52, 152, 219, 0.9);
+    outline-offset: -2px;
+}
+
+.ranking-position {
+    display: inline-grid;
+    width: 30px;
+    height: 30px;
+    place-items: center;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.1);
+    font-weight: 800;
+}
+
+.ranking-row.champion .ranking-position {
+    background: var(--yellow);
+    color: #1d1d1d;
+}
+
+.ranking-player {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+}
+
+.ranking-player strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ranking-player small {
+    flex: 0 0 auto;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(52, 152, 219, 0.28);
+    color: #bfe4ff;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.ranking-cards {
+    color: var(--text-secondary);
+    font-size: 13px;
+    white-space: nowrap;
+}
+
 .result-actions {
     display: flex;
     justify-content: center;
@@ -1103,6 +1195,35 @@
 
 .result-card h2.lose {
     color: var(--red);
+}
+
+@media (max-width: 520px) {
+    .result-card {
+        padding: 26px 18px;
+    }
+
+    .result-card h2 {
+        margin-bottom: 18px;
+        font-size: 29px;
+    }
+
+    .result-subtitle {
+        margin-bottom: 16px;
+    }
+
+    .ranking-row {
+        grid-template-columns: 34px minmax(0, 1fr) auto;
+        gap: 7px;
+        padding: 7px 9px;
+    }
+
+    .ranking-player {
+        gap: 5px;
+    }
+
+    .result-actions {
+        flex-wrap: wrap;
+    }
 }
 
 .btn-secondary {

@@ -1,5 +1,6 @@
 package com.uno.dto.request;
 
+import com.uno.entity.enums.DrawPileRule;
 import com.uno.entity.enums.GameMode;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -19,6 +20,8 @@ public class CreateRoomRequest {
 
     private GameMode gameMode = GameMode.CLASSIC;
 
+    private DrawPileRule drawPileRule = DrawPileRule.AUTO_REFILL;
+
     public int getMaxPlayers() { return maxPlayers; }
     public void setMaxPlayers(int maxPlayers) { this.maxPlayers = maxPlayers; }
 
@@ -30,4 +33,7 @@ public class CreateRoomRequest {
 
     public GameMode getGameMode() { return gameMode; }
     public void setGameMode(GameMode gameMode) { this.gameMode = gameMode; }
+
+    public DrawPileRule getDrawPileRule() { return drawPileRule; }
+    public void setDrawPileRule(DrawPileRule drawPileRule) { this.drawPileRule = drawPileRule; }
 }

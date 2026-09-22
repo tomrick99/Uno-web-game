@@ -1,6 +1,7 @@
 package com.uno.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.uno.entity.enums.DrawPileRule;
 import com.uno.entity.enums.GameMode;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
@@ -37,6 +38,10 @@ public class Room {
     @Column(name = "game_mode", length = 50)
     private GameMode gameMode = GameMode.CLASSIC;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "draw_pile_rule", length = 50)
+    private DrawPileRule drawPileRule = DrawPileRule.AUTO_REFILL;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -66,6 +71,9 @@ public class Room {
         }
         if (gameMode == null) {
             gameMode = GameMode.CLASSIC;
+        }
+        if (gameMode == GameMode.CLASSIC || drawPileRule == null) {
+            drawPileRule = DrawPileRule.AUTO_REFILL;
         }
     }
 
@@ -104,6 +112,9 @@ public class Room {
 
     public GameMode getGameMode() { return gameMode; }
     public void setGameMode(GameMode gameMode) { this.gameMode = gameMode; }
+
+    public DrawPileRule getDrawPileRule() { return drawPileRule; }
+    public void setDrawPileRule(DrawPileRule drawPileRule) { this.drawPileRule = drawPileRule; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

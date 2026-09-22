@@ -75,6 +75,7 @@ public class AdminController {
                     request.getTotalRounds(),
                     request.getRoundTimeLimitMinutes(),
                     request.getGameMode(),
+                    request.getDrawPileRule(),
                     user.getId(),
                     user.getUsername()
             );
