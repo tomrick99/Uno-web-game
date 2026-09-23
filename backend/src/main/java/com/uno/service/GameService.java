@@ -10,6 +10,7 @@ import com.uno.entity.User;
 import com.uno.entity.enums.CardColor;
 import com.uno.entity.enums.CardType;
 import com.uno.entity.enums.DrawPileRule;
+import com.uno.entity.enums.GameEndReason;
 import com.uno.entity.enums.GameStatus;
 import com.uno.entity.enums.GameMode;
 import com.uno.entity.enums.PendingDrawType;
@@ -35,6 +36,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
@@ -93,7 +96,7 @@ public class GameService {
                                                        Long actorUserId,
                                                        String actorName) {
         return updateRoomConfigByAdmin(roomId, maxPlayers, totalRounds, roundTimeLimitMinutes, gameMode,
-                DrawPileRule.AUTO_REFILL, actorUserId, actorName);
+                DrawPileRule.AUTO_REFILL, false, actorUserId, actorName);
     }
 
     public Map<String, Object> updateRoomConfigByAdmin(Long roomId,
@@ -104,6 +107,19 @@ public class GameService {
                                                        DrawPileRule drawPileRule,
                                                        Long actorUserId,
                                                        String actorName) {
+        return updateRoomConfigByAdmin(roomId, maxPlayers, totalRounds, roundTimeLimitMinutes, gameMode,
+                drawPileRule, false, actorUserId, actorName);
+    }
+
+    public Map<String, Object> updateRoomConfigByAdmin(Long roomId,
+                                                       int maxPlayers,
+                                                       int totalRounds,
+                                                       int roundTimeLimitMinutes,
+                                                       GameMode gameMode,
+                                                       DrawPileRule drawPileRule,
+                                                       boolean countdownEnabled,
+                                                       Long actorUserId,
+                                                       String actorName) {
         return withRoomLock(roomId, () -> doUpdateRoomConfigByAdmin(
                 roomId,
                 maxPlayers,
@@ -111,6 +127,7 @@ public class GameService {
                 roundTimeLimitMinutes,
                 gameMode,
                 drawPileRule,
+                countdownEnabled,
                 actorUserId,
                 actorName));
     }
@@ -237,6 +254,17 @@ public class GameService {
         return withRoomLock(roomId, () -> doRestartGame(gameId, userId));
     }
 
+    public boolean expireCountdown(Long gameId) {
+        Optional<Game> gameOpt = gameRepository.findById(gameId);
+        if (gameOpt.isEmpty() || gameOpt.get().getRoom() == null) {
+            return false;
+        }
+        Long roomId = gameOpt.get().getRoom().getId();
+        return withRoomLock(roomId, () -> gameRepository.findById(gameId)
+                .map(this::finishGameIfCountdownElapsed)
+                .orElse(false));
+    }
+
     public void deleteRoomByAdmin(Long roomId, String operatorName) {
         withRoomLock(roomId, () -> {
             Room room = roomRepository.findById(roomId)
@@ -315,6 +343,10 @@ public class GameService {
         state.put("maxPlayers", game.getRoom().getMaxPlayers());
         state.put("totalRounds", game.getRoom().getTotalRounds());
         state.put("roundTimeLimitMinutes", game.getRoom().getRoundTimeLimitMinutes());
+        state.put("countdownEnabled", game.getRoom().isCountdownEnabled());
+        state.put("countdownEndsAt", toEpochMilli(game.getCountdownEndsAt()));
+        state.put("serverTime", System.currentTimeMillis());
+        state.put("endReason", game.getEndReason() != null ? game.getEndReason().name() : null);
         state.put("gameMode", resolveGameMode(game).name());
         state.put("drawPileRule", resolveDrawPileRule(game).name());
         state.put("status", game.getStatus().name());
@@ -420,6 +452,8 @@ public class GameService {
                 .findFirst()
                 .orElseGet(() -> createWaitingGame(room));
 
+        finishGameIfCountdownElapsed(game);
+
         Optional<GamePlayer> existingPlayer = gamePlayerRepository.findByGameAndUser(game, user);
         if (existingPlayer.isEmpty()) {
             if (room.getStatus() != RoomStatus.WAITING || game.getStatus() == GameStatus.FINISHED) {
@@ -464,6 +498,7 @@ public class GameService {
                                                           int roundTimeLimitMinutes,
                                                           GameMode gameMode,
                                                           DrawPileRule drawPileRule,
+                                                          boolean countdownEnabled,
                                                           Long actorUserId,
                                                           String actorName) {
         roomService.updateRoomConfigByAdmin(
@@ -472,7 +507,8 @@ public class GameService {
                 totalRounds,
                 roundTimeLimitMinutes,
                 gameMode,
-                drawPileRule);
+                drawPileRule,
+                countdownEnabled);
 
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
@@ -524,6 +560,10 @@ public class GameService {
     private Map<String, Object> doPlayCard(Long gameId, Long userId, int cardIndex, CardColor chosenColor) {
         Game game = gameRepository.findById(gameId)
                 .orElseThrow(() -> new IllegalArgumentException("Game not found"));
+
+        if (finishGameIfCountdownElapsed(game)) {
+            return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "GAME_FINISHED");
+        }
 
         if (game.getStatus() != GameStatus.PLAYING) {
             throw new IllegalArgumentException("Game is not in playing state");
@@ -586,6 +626,7 @@ public class GameService {
             game.setStatus(GameStatus.FINISHED);
             game.setCurrentTurn(null);
             game.setWinnerId(userId);
+            game.setEndReason(GameEndReason.NORMAL);
             clearPendingDraw(game);
         } else {
             autoPenaltyPlayer = resolveUnstackablePenalty(game, players);
@@ -648,6 +689,10 @@ public class GameService {
     private Map<String, Object> doDrawCard(Long gameId, Long userId) {
         Game game = gameRepository.findById(gameId)
                 .orElseThrow(() -> new IllegalArgumentException("Game not found"));
+
+        if (finishGameIfCountdownElapsed(game)) {
+            return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "GAME_FINISHED");
+        }
 
         if (game.getStatus() != GameStatus.PLAYING) {
             throw new IllegalArgumentException("Game is not in playing state");
@@ -718,6 +763,10 @@ public class GameService {
     private Map<String, Object> doDrawPenalty(Long gameId, Long userId) {
         Game game = gameRepository.findById(gameId)
                 .orElseThrow(() -> new IllegalArgumentException("Game not found"));
+
+        if (finishGameIfCountdownElapsed(game)) {
+            return operationAck(game.getRoom().getId(), game.getId(), getCurrentStateVersion(game.getRoom().getId(), game), "GAME_FINISHED");
+        }
 
         if (game.getStatus() != GameStatus.PLAYING) {
             throw new IllegalArgumentException("Game is not in playing state");
@@ -1010,6 +1059,10 @@ public class GameService {
         game.setStatus(GameStatus.PLAYING);
         game.setClockwise(true);
         game.setWinnerId(null);
+        game.setEndReason(null);
+        game.setCountdownEndsAt(game.getRoom().isCountdownEnabled()
+                ? LocalDateTime.now().plusMinutes(game.getRoom().getRoundTimeLimitMinutes())
+                : null);
         clearPendingDraw(game);
         clearRematchReady(game);
         dealCards(game, deck);
@@ -1611,6 +1664,55 @@ public class GameService {
         return game.getRoom().getDrawPileRule();
     }
 
+    private boolean finishGameIfCountdownElapsed(Game game) {
+        if (game == null
+                || game.getRoom() == null
+                || game.getStatus() != GameStatus.PLAYING
+                || !game.getRoom().isCountdownEnabled()
+                || game.getCountdownEndsAt() == null
+                || LocalDateTime.now().isBefore(game.getCountdownEndsAt())) {
+            return false;
+        }
+
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        GamePlayer winner = selectFewestCardsWinner(players);
+        game.setWinnerId(winner != null ? winner.getUser().getId() : null);
+        game.setStatus(GameStatus.FINISHED);
+        game.setEndReason(GameEndReason.COUNTDOWN_EXPIRED);
+        game.setCurrentTurn(null);
+        clearPendingDraw(game);
+        roomService.closeRoom(game.getRoom());
+        gameRepository.save(game);
+        long version = bumpStateVersion(game.getRoom().getId());
+
+        String winnerName = resolveWinnerName(players, game.getWinnerId());
+        String message = "Time is up. " + winnerName + " wins with the fewest cards.";
+        Map<String, Object> roomState = getRoomStateWithVersion(game.getRoom(), game);
+        PublicGamePatch publicPatch = buildPublicGamePatch(
+                game,
+                players,
+                "GAME_FINISHED",
+                null,
+                null,
+                message);
+        publishAfterCommit("countdownExpired", () -> {
+            wsService.broadcastRoomState(roomState, "GAME_FINISHED", message);
+            wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Game finished");
+            wsService.broadcastPublicGamePatch(publicPatch);
+        });
+        log.info("[UNO] countdown expired gameId={} roomId={} winner={} version={}",
+                game.getId(), game.getRoom().getId(), game.getWinnerId(), version);
+        return true;
+    }
+
+    private GamePlayer selectFewestCardsWinner(List<GamePlayer> players) {
+        return players.stream()
+                .min(Comparator
+                        .comparingInt((GamePlayer player) -> player.getHandCards() == null ? 0 : player.getHandCards().size())
+                        .thenComparingInt(GamePlayer::getSeatIndex))
+                .orElse(null);
+    }
+
     private boolean finishGameIfFinitePileExhausted(Game game, Deck deck) {
         if (game == null
                 || deck == null
@@ -1621,13 +1723,10 @@ public class GameService {
         }
 
         List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
-        GamePlayer winner = players.stream()
-                .min(Comparator
-                        .comparingInt((GamePlayer player) -> player.getHandCards() == null ? 0 : player.getHandCards().size())
-                        .thenComparingInt(GamePlayer::getSeatIndex))
-                .orElse(null);
+        GamePlayer winner = selectFewestCardsWinner(players);
         game.setWinnerId(winner != null ? winner.getUser().getId() : null);
         game.setStatus(GameStatus.FINISHED);
+        game.setEndReason(GameEndReason.DRAW_PILE_EXHAUSTED);
         game.setCurrentTurn(null);
         clearPendingDraw(game);
         roomService.closeRoom(game.getRoom());
@@ -1770,6 +1869,9 @@ public class GameService {
                     game.getPendingDrawType() != null ? game.getPendingDrawType().name() : PendingDrawType.NONE.name(),
                     game.getLastPenaltyPlayerId(),
                     fromJson(game.getDrawPileJson()).size(),
+                    game.getRoom().isCountdownEnabled(),
+                    toEpochMilli(game.getCountdownEndsAt()),
+                    game.getEndReason() != null ? game.getEndReason().name() : null,
                     game.getStatus().name(),
                     game.getRoom().getStatus().name(),
                     publicPlayers,
@@ -1938,6 +2040,10 @@ public class GameService {
             }
         }
         return null;
+    }
+
+    private Long toEpochMilli(LocalDateTime value) {
+        return value == null ? null : value.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
     }
 
     private int resolveCurrentPlayerIndex(Game game) {

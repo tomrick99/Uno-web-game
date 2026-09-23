@@ -25,12 +25,14 @@ import org.junit.jupiter.params.provider.EnumSource;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -143,6 +145,8 @@ class GameServiceInitialDiscardTest {
         User bob = user(2L, "bob");
         Room room = new Room();
         room.setGameMode(GameMode.NO_MERCY);
+        room.setCountdownEnabled(true);
+        room.setRoundTimeLimitMinutes(10);
 
         Game game = new Game();
         game.setRoom(room);
@@ -183,7 +187,9 @@ class GameServiceInitialDiscardTest {
         Deck deck = deckInDrawOrder(GameMode.NO_MERCY, dealOrder);
         Map<String, Long> before = cardMultiset(deck.getDrawPile());
 
+        LocalDateTime earliestDeadline = LocalDateTime.now().plusMinutes(10).minusSeconds(1);
         gameService.startGame(game, deck);
+        LocalDateTime latestDeadline = LocalDateTime.now().plusMinutes(10).plusSeconds(1);
 
         List<Card> persistedDrawPile = readCards(game.getDrawPileJson());
         List<Card> persistedDiscardPile = readCards(game.getDiscardPileJson());
@@ -210,6 +216,9 @@ class GameServiceInitialDiscardTest {
         assertEquals(0, game.getPendingDrawCount());
         assertEquals(PendingDrawType.NONE, game.getPendingDrawType());
         assertEquals(GameStatus.PLAYING, game.getStatus());
+        assertNotNull(game.getCountdownEndsAt());
+        assertTrue(!game.getCountdownEndsAt().isBefore(earliestDeadline));
+        assertTrue(!game.getCountdownEndsAt().isAfter(latestDeadline));
         Map<String, Long> persistedDrawCounts = cardMultiset(persistedDrawPile);
         for (Card rejectedCard : rejected) {
             assertTrue(persistedDrawCounts.getOrDefault(cardKey(rejectedCard), 0L) > 0,

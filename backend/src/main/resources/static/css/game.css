@@ -217,6 +217,12 @@
     overflow: hidden;
 }
 
+.countdown-chip {
+    min-width: 112px;
+    justify-content: space-between;
+    font-variant-numeric: tabular-nums;
+}
+
 .opponent-avatar img {
     width: 100%;
     height: 100%;

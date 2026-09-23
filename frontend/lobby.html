@@ -62,7 +62,7 @@
                             <span>{{ room.playerCount || 0 }}/{{ room.maxPlayers || 2 }} {{ t("playersUnit") }}</span>
                             <span>{{ modeLabel(room.gameMode) }}</span>
                             <span v-if="room.gameMode === 'NO_MERCY'">{{ drawPileRuleLabel(room.drawPileRule) }}</span>
-                            <span>{{ room.roundTimeLimitMinutes || 10 }} {{ t("minutesUnit") }}</span>
+                            <span>{{ room.countdownEnabled ? `${room.roundTimeLimitMinutes || 10} ${t("minutesUnit")} ${t("countdown")}` : t("noCountdown") }}</span>
                         </div>
                     </div>
                     <div class="room-action">
@@ -103,6 +103,28 @@
                             :class="{ active: gameMode === option.value }"
                             @click="gameMode = option.value"
                         >{{ option.label }}</button>
+                    </div>
+
+                    <label>{{ t("gameCountdown") }}</label>
+                    <div class="option-grid mode-options">
+                        <button class="option-chip" :class="{ active: !countdownEnabled }" @click="countdownEnabled = false">
+                            {{ t("countdownOff") }}
+                        </button>
+                        <button class="option-chip" :class="{ active: countdownEnabled }" @click="countdownEnabled = true">
+                            {{ t("countdownOn") }}
+                        </button>
+                    </div>
+                    <div v-if="countdownEnabled">
+                        <label>{{ t("countdownDuration") }}</label>
+                        <div class="option-grid compact">
+                            <button
+                                v-for="option in timeOptions"
+                                :key="option"
+                                class="option-chip"
+                                :class="{ active: roundTimeLimitMinutes === option }"
+                                @click="roundTimeLimitMinutes = option"
+                            >{{ option }} {{ t("minutesUnit") }}</button>
+                        </div>
                     </div>
 
                     <div v-if="gameMode === 'NO_MERCY'" class="draw-rule-section">

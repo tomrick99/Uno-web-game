@@ -59,6 +59,13 @@ public class Game {
     @Column(name = "winner_id")
     private Long winnerId;
 
+    @Column(name = "countdown_ends_at")
+    private LocalDateTime countdownEndsAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "end_reason", length = 50)
+    private com.uno.entity.enums.GameEndReason endReason;
+
     @Column(name = "draw_pile", columnDefinition = "TEXT")
     private String drawPileJson;
 
@@ -110,6 +117,12 @@ public class Game {
 
     public Long getWinnerId() { return winnerId; }
     public void setWinnerId(Long winnerId) { this.winnerId = winnerId; }
+
+    public LocalDateTime getCountdownEndsAt() { return countdownEndsAt; }
+    public void setCountdownEndsAt(LocalDateTime countdownEndsAt) { this.countdownEndsAt = countdownEndsAt; }
+
+    public com.uno.entity.enums.GameEndReason getEndReason() { return endReason; }
+    public void setEndReason(com.uno.entity.enums.GameEndReason endReason) { this.endReason = endReason; }
 
     public String getDrawPileJson() { return drawPileJson; }
     public void setDrawPileJson(String drawPileJson) { this.drawPileJson = drawPileJson; }

@@ -86,7 +86,8 @@ class RoomControllerTest {
                                int totalRounds,
                                int roundTimeLimitMinutes,
                                GameMode gameMode,
-                               DrawPileRule drawPileRule) {
+                               DrawPileRule drawPileRule,
+                               boolean countdownEnabled) {
             return room;
         }
 

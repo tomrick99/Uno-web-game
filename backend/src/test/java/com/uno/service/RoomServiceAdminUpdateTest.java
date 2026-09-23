@@ -66,6 +66,21 @@ class RoomServiceAdminUpdateTest {
     }
 
     @Test
+    void waitingRoomCanEnableGameCountdown() {
+        Room room = room(1L, RoomStatus.WAITING, 4);
+        when(roomRepository.findById(1L)).thenReturn(Optional.of(room));
+        when(roomRepository.save(any(Room.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(gameRepository.findByRoom(room)).thenReturn(List.of());
+
+        Map<String, Object> state = roomService.updateRoomConfigByAdmin(
+                1L, 4, 8, 15, GameMode.CLASSIC, DrawPileRule.AUTO_REFILL, true);
+
+        assertEquals(true, room.isCountdownEnabled());
+        assertEquals(true, state.get("countdownEnabled"));
+        assertEquals(15, state.get("roundTimeLimitMinutes"));
+    }
+
+    @Test
     void classicRoomAlwaysUsesAutoRefill() {
         Room room = room(1L, RoomStatus.WAITING, 4);
         when(roomRepository.findById(1L)).thenReturn(Optional.of(room));

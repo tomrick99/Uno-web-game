@@ -34,6 +34,9 @@ public class Room {
     @Column(name = "round_time_limit_minutes")
     private int roundTimeLimitMinutes = 10;
 
+    @Column(name = "countdown_enabled", nullable = false)
+    private boolean countdownEnabled = false;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "game_mode", length = 50)
     private GameMode gameMode = GameMode.CLASSIC;
@@ -109,6 +112,9 @@ public class Room {
 
     public int getRoundTimeLimitMinutes() { return roundTimeLimitMinutes; }
     public void setRoundTimeLimitMinutes(int roundTimeLimitMinutes) { this.roundTimeLimitMinutes = roundTimeLimitMinutes; }
+
+    public boolean isCountdownEnabled() { return countdownEnabled; }
+    public void setCountdownEnabled(boolean countdownEnabled) { this.countdownEnabled = countdownEnabled; }
 
     public GameMode getGameMode() { return gameMode; }
     public void setGameMode(GameMode gameMode) { this.gameMode = gameMode; }

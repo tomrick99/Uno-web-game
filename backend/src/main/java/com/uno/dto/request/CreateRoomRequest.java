@@ -18,6 +18,8 @@ public class CreateRoomRequest {
     @Max(value = 15, message = "At most 15 minutes are allowed")
     private int roundTimeLimitMinutes = 10;
 
+    private boolean countdownEnabled = false;
+
     private GameMode gameMode = GameMode.CLASSIC;
 
     private DrawPileRule drawPileRule = DrawPileRule.AUTO_REFILL;
@@ -30,6 +32,9 @@ public class CreateRoomRequest {
 
     public int getRoundTimeLimitMinutes() { return roundTimeLimitMinutes; }
     public void setRoundTimeLimitMinutes(int roundTimeLimitMinutes) { this.roundTimeLimitMinutes = roundTimeLimitMinutes; }
+
+    public boolean isCountdownEnabled() { return countdownEnabled; }
+    public void setCountdownEnabled(boolean countdownEnabled) { this.countdownEnabled = countdownEnabled; }
 
     public GameMode getGameMode() { return gameMode; }
     public void setGameMode(GameMode gameMode) { this.gameMode = gameMode; }

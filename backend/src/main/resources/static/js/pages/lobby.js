@@ -17,6 +17,7 @@ createApp({
         const showCreate = ref(false);
         const maxPlayers = ref(2);
         const roundTimeLimitMinutes = ref(10);
+        const countdownEnabled = ref(false);
         const gameMode = ref("CLASSIC");
         const drawPileRule = ref("AUTO_REFILL");
         const language = ref(localStorage.getItem("unoLanguage") || "zh");
@@ -50,6 +51,12 @@ createApp({
                 playing: "游戏中",
                 playersUnit: "人",
                 minutesUnit: "分钟",
+                countdown: "倒计时",
+                noCountdown: "不限时",
+                gameCountdown: "整局倒计时",
+                countdownOff: "不开倒计时",
+                countdownOn: "开启倒计时",
+                countdownDuration: "倒计时时长",
                 host: "房主",
                 unknown: "未知",
                 join: "加入",
@@ -96,6 +103,12 @@ createApp({
                 playing: "Playing",
                 playersUnit: "players",
                 minutesUnit: "min",
+                countdown: "countdown",
+                noCountdown: "No countdown",
+                gameCountdown: "Game countdown",
+                countdownOff: "No countdown",
+                countdownOn: "Enable countdown",
+                countdownDuration: "Countdown duration",
                 host: "Host",
                 unknown: "Unknown",
                 join: "Join",
@@ -567,6 +580,7 @@ createApp({
                 const payload = {
                     maxPlayers: maxPlayers.value,
                     roundTimeLimitMinutes: roundTimeLimitMinutes.value,
+                    countdownEnabled: countdownEnabled.value,
                     gameMode: gameMode.value,
                     drawPileRule: gameMode.value === "NO_MERCY" ? drawPileRule.value : "AUTO_REFILL"
                 };
@@ -671,6 +685,7 @@ createApp({
             showCreate,
             maxPlayers,
             roundTimeLimitMinutes,
+            countdownEnabled,
             gameMode,
             drawPileRule,
             language,

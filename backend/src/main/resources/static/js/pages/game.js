@@ -14,6 +14,11 @@ createApp({
         const roomStatus = ref("WAITING");
         const maxPlayers = ref(2);
         const roundTimeLimitMinutes = ref(10);
+        const countdownEnabled = ref(false);
+        const countdownEndsAt = ref(null);
+        const countdownNow = ref(Date.now());
+        const serverTimeOffsetMs = ref(0);
+        const endReason = ref(null);
         const gameMode = ref("CLASSIC");
         const drawPileRule = ref("AUTO_REFILL");
         const userId = ref(localStorage.getItem("userId"));
@@ -72,6 +77,7 @@ createApp({
         let pollTimer = null;
         let fallbackActivationTimer = null;
         let autoPenaltyTimer = null;
+        let countdownTimer = null;
         let delegatedButtonHandler = null;
         let beforeUnloadHandler = null;
         let disconnectedAt = null;
@@ -99,6 +105,7 @@ createApp({
                 me: "我",
                 avatar: "头像",
                 currentColor: "当前颜色",
+                timeRemaining: "剩余时间",
                 backToLobby: "返回大厅",
                 canDraw: "可以抽牌",
                 cannotDraw: "现在不能抽牌",
@@ -185,6 +192,7 @@ createApp({
                 me: "Me",
                 avatar: "avatar",
                 currentColor: "Color",
+                timeRemaining: "Time left",
                 backToLobby: "Back to Lobby",
                 canDraw: "You can draw",
                 cannotDraw: "You cannot draw now",
@@ -345,6 +353,16 @@ createApp({
         const drawPileRuleLabel = computed(() => drawPileRule.value === "FINITE_DRAW_PILE"
             ? (language.value === "zh" ? "有限抽牌堆" : "Finite Draw Pile")
             : (language.value === "zh" ? "自动补充" : "Auto Refill"));
+        const countdownRemainingSeconds = computed(() => {
+            if (!countdownEnabled.value || !countdownEndsAt.value) return 0;
+            const estimatedServerNow = countdownNow.value + serverTimeOffsetMs.value;
+            return Math.max(0, Math.ceil((Number(countdownEndsAt.value) - estimatedServerNow) / 1000));
+        });
+        const countdownDisplay = computed(() => {
+            const seconds = countdownRemainingSeconds.value;
+            const minutes = Math.floor(seconds / 60);
+            return `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+        });
         const colorName = (color) => {
             if (color === "RED") return t("red");
             if (color === "YELLOW") return t("yellow");
@@ -750,8 +768,11 @@ createApp({
         const buildGameResult = (gameState) => {
             const players = Array.isArray(gameState.players) ? gameState.players : [];
             const winner = players.find((player) => String(player.userId) === String(gameState.winnerId));
-            const showFinalRanking = drawPileRule.value === "FINITE_DRAW_PILE"
-                && Number(gameState.drawPileSize ?? drawPileSize.value) === 0;
+            const resolvedEndReason = gameState.endReason || endReason.value;
+            const showFinalRanking = resolvedEndReason === "COUNTDOWN_EXPIRED"
+                || resolvedEndReason === "DRAW_PILE_EXHAUSTED"
+                || (drawPileRule.value === "FINITE_DRAW_PILE"
+                    && Number(gameState.drawPileSize ?? drawPileSize.value) === 0);
             const ranking = showFinalRanking
                 ? [...players]
                     .sort((first, second) => {
@@ -820,6 +841,11 @@ createApp({
             roomStatus.value = "WAITING";
             maxPlayers.value = 2;
             roundTimeLimitMinutes.value = 10;
+            countdownEnabled.value = false;
+            countdownEndsAt.value = null;
+            countdownNow.value = Date.now();
+            serverTimeOffsetMs.value = 0;
+            endReason.value = null;
             gameMode.value = "CLASSIC";
             drawPileRule.value = "AUTO_REFILL";
             roomPlayerCount.value = 0;
@@ -909,6 +935,7 @@ createApp({
             roundTimeLimitMinutes.value = Number(state.roundTimeLimitMinutes || roundTimeLimitMinutes.value || 10);
             gameMode.value = state.gameMode || gameMode.value || "CLASSIC";
             drawPileRule.value = state.drawPileRule || drawPileRule.value || "AUTO_REFILL";
+            if (hasOwnField(state, "countdownEnabled")) countdownEnabled.value = Boolean(state.countdownEnabled);
         };
 
         const mapTablePlayer = (player) => ({
@@ -1013,11 +1040,15 @@ createApp({
                 copyField("pendingDrawType");
                 copyField("lastPenaltyPlayerId");
                 copyField("drawPileSize");
+                copyField("countdownEnabled");
+                copyField("countdownEndsAt");
+                copyField("endReason");
                 copyField("winnerId");
                 copyField("rematchReadyPlayerIds");
                 if (hasOwnField(payload, "direction")) {
                     gameState.clockwise = payload.direction !== -1;
                 }
+                if (hasOwnField(payload, "timestamp")) gameState.serverTime = payload.timestamp;
                 if (hasOwnField(payload, "topCard")) {
                     gameState.topCard = payload.topCard;
                 } else if (hasOwnField(payload, "discardTopCard")) {
@@ -1193,6 +1224,13 @@ createApp({
             if (hasOwnField(gameState, "pendingDrawType")) pendingDrawType.value = gameState.pendingDrawType ?? "NONE";
             if (hasOwnField(gameState, "lastPenaltyPlayerId")) lastPenaltyPlayerId.value = gameState.lastPenaltyPlayerId;
             if (hasOwnField(gameState, "drawPileSize")) drawPileSize.value = Number(gameState.drawPileSize ?? 0);
+            if (hasOwnField(gameState, "countdownEnabled")) countdownEnabled.value = Boolean(gameState.countdownEnabled);
+            if (hasOwnField(gameState, "countdownEndsAt")) countdownEndsAt.value = gameState.countdownEndsAt == null ? null : Number(gameState.countdownEndsAt);
+            if (hasOwnField(gameState, "endReason")) endReason.value = gameState.endReason || null;
+            if (hasOwnField(gameState, "serverTime") && Number.isFinite(Number(gameState.serverTime))) {
+                serverTimeOffsetMs.value = Number(gameState.serverTime) - Date.now();
+                countdownNow.value = Date.now();
+            }
             if (hasOwnField(gameState, "topCard") && gameState.topCard) {
                 topCard.value = {
                     ...gameState.topCard,
@@ -1888,6 +1926,9 @@ createApp({
         };
 
         onMounted(async () => {
+            countdownTimer = setInterval(() => {
+                countdownNow.value = Date.now();
+            }, 250);
             console.info("[UNO-GAME] game.js loaded");
             console.info("[UNO-GAME] roomId from URL =", roomId.value);
             console.info("[UNO-GAME] websocket endpoint =", websocketEndpoint);
@@ -1934,6 +1975,7 @@ createApp({
             shouldReconnect = false;
             cleanupRealtime();
             clearAutoPenaltyTimer();
+            if (countdownTimer) clearInterval(countdownTimer);
             if (beforeUnloadHandler) window.removeEventListener("beforeunload", beforeUnloadHandler);
             if (delegatedButtonHandler) document.removeEventListener("click", delegatedButtonHandler);
         });
@@ -1944,9 +1986,13 @@ createApp({
             roomStatus,
             maxPlayers,
             roundTimeLimitMinutes,
+            countdownEnabled,
+            countdownEndsAt,
+            countdownDisplay,
             gameMode,
             drawPileRule,
             language,
+            gameStatus,
             currentTurn,
             clockwise,
             direction,

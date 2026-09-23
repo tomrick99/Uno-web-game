@@ -41,6 +41,10 @@
                     <span class="status-label">{{ t("drawPile") }}</span>
                     <span>{{ drawPileRuleLabel }}</span>
                 </div>
+                <div v-if="countdownEnabled && gameStatus === 'PLAYING' && countdownEndsAt" class="status-chip countdown-chip">
+                    <span class="status-label">{{ t("timeRemaining") }}</span>
+                    <span>{{ countdownDisplay }}</span>
+                </div>
                 <div class="status-chip">
                     <span class="status-label">{{ t("players") }}</span>
                     <span>{{ playerCount }}/{{ maxPlayers }}</span>

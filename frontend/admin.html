@@ -46,7 +46,7 @@
                         <div class="room-meta">
                             <div>房主：{{ room.host?.username || '未知' }}</div>
                             <div>人数：{{ room.playerCount }} / {{ room.maxPlayers }}</div>
-                            <div>时间：{{ room.roundTimeLimitMinutes }} 分钟</div>
+                            <div>倒计时：{{ room.countdownEnabled ? `${room.roundTimeLimitMinutes} 分钟` : '关闭' }}</div>
                             <div>模式：{{ modeLabel(room.gameMode) }}</div>
                             <div v-if="room.gameMode === 'NO_MERCY'">抽牌堆：{{ drawPileRuleLabel(room.drawPileRule) }}</div>
                             <div>创建时间：{{ formatTime(room.createdAt) }}</div>
@@ -69,8 +69,14 @@
                             <option v-for="option in playerOptions" :key="option" :value="option">{{ option }} 人</option>
                         </select>
 
-                        <label>单局时长</label>
-                        <select v-model.number="editForm.roundTimeLimitMinutes">
+                        <label>整局倒计时</label>
+                        <select v-model="editForm.countdownEnabled">
+                            <option :value="false">关闭</option>
+                            <option :value="true">开启</option>
+                        </select>
+
+                        <label v-if="editForm.countdownEnabled">倒计时时长</label>
+                        <select v-if="editForm.countdownEnabled" v-model.number="editForm.roundTimeLimitMinutes">
                             <option v-for="option in timeOptions" :key="option" :value="option">{{ option }} 分钟</option>
                         </select>
 
