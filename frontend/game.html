@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>UNO - Game</title>
     <script src="https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios@1.5.0/dist/axios.min.js"></script>
@@ -19,25 +19,79 @@
             <div class="circle c3"></div>
         </div>
 
-        <header class="game-top-bar">
+        <header class="mobile-game-top-bar">
+            <span class="mobile-turn-indicator" :class="{ 'my-turn': isMyTurn }" :title="turnLabel">{{ turnLabel }}</span>
+            <div class="mobile-color-status" :title="`${t('currentColor')}: ${currentColorLabel}`">
+                <span class="current-color" :style="{ background: colorMap[currentColor] || '#777' }"></span>
+                <span>{{ currentColorLabel }}</span>
+            </div>
+            <div
+                v-if="gameTimerEnabled && gameStatus === 'PLAYING'"
+                class="mobile-countdown-status"
+                :class="{ urgent: countdownUrgent }"
+                role="timer"
+                aria-live="off"
+                :title="t('timeRemaining')"
+            >
+                {{ countdownText }}
+            </div>
+            <details class="mobile-status-menu">
+                <summary class="mobile-status-summary" aria-label="更多游戏信息 / More game information">
+                    <span class="mobile-more-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                </summary>
+                <div class="mobile-status-drawer">
+                    <div class="mobile-room-row">
+                        <span class="room-code">{{ t("room") }}: {{ roomCode || roomId }}</span>
+                        <span class="mobile-connection" :class="{ offline: !wsConnected }">
+                            <span class="status-dot"></span>
+                            <span>{{ connectionLabel }}</span>
+                        </span>
+                    </div>
+                    <div class="mobile-status-grid">
+                        <div class="status-chip">
+                            <span class="status-label">{{ t("direction") }}</span>
+                            <span>{{ directionLabel }}</span>
+                        </div>
+                        <div class="status-chip">
+                            <span class="status-label">{{ t("mode") }}</span>
+                            <span>{{ gameModeLabel }}</span>
+                        </div>
+                        <div v-if="gameMode === 'NO_MERCY'" class="status-chip">
+                            <span class="status-label">{{ t("drawPile") }}</span>
+                            <span>{{ drawPileRuleLabel }}</span>
+                        </div>
+                        <div class="status-chip">
+                            <span class="status-label">{{ t("players") }}</span>
+                            <span>{{ playerCount }}/{{ maxPlayers }}</span>
+                        </div>
+                    </div>
+                    <div class="mobile-status-actions">
+                        <button class="lang-toggle" @click="toggleLanguage">{{ languageLabel }}</button>
+                        <button class="top-action-btn" :disabled="leavingRoom" @click="returnToLobby()">{{ t("backToLobby") }}</button>
+                    </div>
+                </div>
+            </details>
+        </header>
+
+        <header class="game-top-bar desktop-game-top-bar">
             <div class="game-info">
                 <span class="room-code">{{ t("room") }}: {{ roomCode || roomId }}</span>
                 <span class="turn-indicator" :class="{ 'my-turn': isMyTurn }">{{ turnLabel }}</span>
             </div>
             <div class="status-panel">
-                <div class="status-chip connection" :class="{ offline: !wsConnected }">
+                <div class="status-chip connection connection-chip" :class="{ offline: !wsConnected }">
                     <span class="status-dot"></span>
                     <span>{{ connectionLabel }}</span>
                 </div>
-                <div class="status-chip">
+                <div class="status-chip direction-chip">
                     <span class="status-label">{{ t("direction") }}</span>
                     <span>{{ directionLabel }}</span>
                 </div>
-                <div class="status-chip">
+                <div class="status-chip mode-chip">
                     <span class="status-label">{{ t("mode") }}</span>
                     <span>{{ gameModeLabel }}</span>
                 </div>
-                <div v-if="gameMode === 'NO_MERCY'" class="status-chip">
+                <div v-if="gameMode === 'NO_MERCY'" class="status-chip draw-rule-chip">
                     <span class="status-label">{{ t("drawPile") }}</span>
                     <span>{{ drawPileRuleLabel }}</span>
                 </div>
@@ -45,7 +99,7 @@
                     <span class="status-label">{{ t("timeRemaining") }}</span>
                     <strong>{{ countdownText }}</strong>
                 </div>
-                <div class="status-chip">
+                <div class="status-chip players-chip">
                     <span class="status-label">{{ t("players") }}</span>
                     <span>{{ playerCount }}/{{ maxPlayers }}</span>
                 </div>
@@ -96,7 +150,12 @@
                         class="draw-pile"
                         :class="{ disabled: !canDraw || drawingCard }"
                         :title="drawingCard ? t('drawing') : (canDraw ? t('canDraw') : t('cannotDraw'))"
+                        role="button"
+                        :tabindex="canDraw && !drawingCard ? 0 : -1"
+                        :aria-disabled="!canDraw || drawingCard"
                         @click="drawCardAction"
+                        @keydown.enter.prevent="drawCardAction"
+                        @keydown.space.prevent="drawCardAction"
                     >
                         <div class="card card-back draw-card">
                             <div class="card-back-design">UNO</div>
@@ -149,7 +208,7 @@
             </div>
         </aside>
 
-        <section class="my-hand-area">
+        <section class="my-hand-area" :class="{ 'has-hand-controls': selectedCard !== null || showPenaltyNotice }">
             <div class="hand-cards">
                 <div
                     v-for="(card, idx) in handCards"
@@ -158,7 +217,12 @@
                     :class="[card.color.toLowerCase(), card.visualClass, card.stateClass, { selected: selectedCard === idx }]"
                     :title="card.hint"
                     :aria-label="card.accessibleLabel"
+                    role="button"
+                    :tabindex="card.stateClass === 'playable' ? 0 : -1"
+                    :aria-disabled="card.stateClass !== 'playable'"
                     @click="selectCard(idx)"
+                    @keydown.enter.prevent="selectCard(idx)"
+                    @keydown.space.prevent="selectCard(idx)"
                 >
                     <div class="card-corner top-left" aria-hidden="true">{{ card.corner }}</div>
                     <div class="card-center" aria-hidden="true">
@@ -174,60 +238,62 @@
                 </div>
             </div>
 
-            <div class="action-buttons" v-if="selectedCard !== null">
-                <div
-                    v-if="needsColorPick"
-                    class="wild-color-picker"
-                    :class="{ selected: chosenColor }"
-                    role="group"
-                    :aria-label="t('colorSelectionTitle')"
-                >
-                    <div class="color-picker-title">{{ t("colorSelectionTitle") }}</div>
+            <div class="hand-controls" v-if="selectedCard !== null || showPenaltyNotice">
+                <div class="action-buttons" v-if="selectedCard !== null">
                     <div
-                        id="wildColorSelectionStatus"
-                        class="color-picker-status"
-                        :class="{ pending: !chosenColor }"
-                        aria-live="polite"
+                        v-if="needsColorPick"
+                        class="wild-color-picker"
+                        :class="{ selected: chosenColor }"
+                        role="group"
+                        :aria-label="t('colorSelectionTitle')"
                     >
-                        {{ chosenColor ? t("colorSelected", { color: colorName(chosenColor) }) : t("chooseColor") }}
+                        <div class="color-picker-title">{{ t("colorSelectionTitle") }}</div>
+                        <div
+                            id="wildColorSelectionStatus"
+                            class="color-picker-status"
+                            :class="{ pending: !chosenColor }"
+                            aria-live="polite"
+                        >
+                            {{ chosenColor ? t("colorSelected", { color: colorName(chosenColor) }) : t("chooseColor") }}
+                        </div>
+                        <div class="wild-color-options">
+                            <button type="button" class="btn-color-pick red" :class="{ selected: chosenColor === 'RED' }" :aria-pressed="chosenColor === 'RED'" @click="pickColor('RED')">
+                                <span>{{ colorName("RED") }}</span>
+                            </button>
+                            <button type="button" class="btn-color-pick blue" :class="{ selected: chosenColor === 'BLUE' }" :aria-pressed="chosenColor === 'BLUE'" @click="pickColor('BLUE')">
+                                <span>{{ colorName("BLUE") }}</span>
+                            </button>
+                            <button type="button" class="btn-color-pick green" :class="{ selected: chosenColor === 'GREEN' }" :aria-pressed="chosenColor === 'GREEN'" @click="pickColor('GREEN')">
+                                <span>{{ colorName("GREEN") }}</span>
+                            </button>
+                            <button type="button" class="btn-color-pick yellow" :class="{ selected: chosenColor === 'YELLOW' }" :aria-pressed="chosenColor === 'YELLOW'" @click="pickColor('YELLOW')">
+                                <span>{{ colorName("YELLOW") }}</span>
+                            </button>
+                        </div>
                     </div>
-                    <div class="wild-color-options">
-                        <button type="button" class="btn-color-pick red" :class="{ selected: chosenColor === 'RED' }" :aria-pressed="chosenColor === 'RED'" @click="pickColor('RED')">
-                            <span>{{ colorName("RED") }}</span>
-                        </button>
-                        <button type="button" class="btn-color-pick blue" :class="{ selected: chosenColor === 'BLUE' }" :aria-pressed="chosenColor === 'BLUE'" @click="pickColor('BLUE')">
-                            <span>{{ colorName("BLUE") }}</span>
-                        </button>
-                        <button type="button" class="btn-color-pick green" :class="{ selected: chosenColor === 'GREEN' }" :aria-pressed="chosenColor === 'GREEN'" @click="pickColor('GREEN')">
-                            <span>{{ colorName("GREEN") }}</span>
-                        </button>
-                        <button type="button" class="btn-color-pick yellow" :class="{ selected: chosenColor === 'YELLOW' }" :aria-pressed="chosenColor === 'YELLOW'" @click="pickColor('YELLOW')">
-                            <span>{{ colorName("YELLOW") }}</span>
-                        </button>
-                    </div>
+                    <button
+                        id="playSelectedCardButton"
+                        type="button"
+                        class="btn-play"
+                        :disabled="!canPlaySelected || playingCard"
+                        :aria-describedby="needsColorPick ? 'wildColorSelectionStatus' : null"
+                        @click="playSelectedCard"
+                    >
+                        {{ playingCard ? t("playing") : t("playCard") }}
+                    </button>
                 </div>
-                <button
-                    id="playSelectedCardButton"
-                    type="button"
-                    class="btn-play"
-                    :disabled="!canPlaySelected || playingCard"
-                    :aria-describedby="needsColorPick ? 'wildColorSelectionStatus' : null"
-                    @click="playSelectedCard"
-                >
-                    {{ playingCard ? t("playing") : t("playCard") }}
-                </button>
-            </div>
 
-            <div v-if="showPenaltyNotice" class="penalty-panel">
-                <div class="penalty-text">{{ penaltyNoticeText }}</div>
-                <button
-                    v-if="showDrawPenaltyButton"
-                    id="drawPenaltyButton"
-                    class="btn-primary"
-                    :disabled="drawingPenalty"
-                >
-                    {{ drawPenaltyButtonText }}
-                </button>
+                <div v-if="showPenaltyNotice" class="penalty-panel">
+                    <div class="penalty-text">{{ penaltyNoticeText }}</div>
+                    <button
+                        v-if="showDrawPenaltyButton"
+                        id="drawPenaltyButton"
+                        class="btn-primary"
+                        :disabled="drawingPenalty"
+                    >
+                        {{ drawPenaltyButtonText }}
+                    </button>
+                </div>
             </div>
         </section>
 
