@@ -41,7 +41,7 @@ public class RoomService {
     }
 
     public Room createRoom(User host, int maxPlayers, int totalRounds, int roundTimeLimitMinutes, GameMode gameMode) {
-        return createRoom(host, maxPlayers, totalRounds, roundTimeLimitMinutes, gameMode, DrawPileRule.AUTO_REFILL);
+        return createRoom(host, maxPlayers, totalRounds, roundTimeLimitMinutes, false, gameMode, DrawPileRule.AUTO_REFILL);
     }
 
     public Room createRoom(User host,
@@ -50,12 +50,23 @@ public class RoomService {
                            int roundTimeLimitMinutes,
                            GameMode gameMode,
                            DrawPileRule drawPileRule) {
+        return createRoom(host, maxPlayers, totalRounds, roundTimeLimitMinutes, false, gameMode, drawPileRule);
+    }
+
+    public Room createRoom(User host,
+                           int maxPlayers,
+                           int totalRounds,
+                           int roundTimeLimitMinutes,
+                           boolean gameTimerEnabled,
+                           GameMode gameMode,
+                           DrawPileRule drawPileRule) {
         validateRoomConfig(maxPlayers, totalRounds, roundTimeLimitMinutes, gameMode);
         Room room = new Room();
         room.setHost(host);
         room.setMaxPlayers(maxPlayers);
         room.setTotalRounds(totalRounds);
         room.setRoundTimeLimitMinutes(roundTimeLimitMinutes);
+        room.setGameTimerEnabled(gameTimerEnabled);
         room.setGameMode(gameMode == null ? GameMode.CLASSIC : gameMode);
         room.setDrawPileRule(resolveDrawPileRule(gameMode, drawPileRule));
         room.setStatus(RoomStatus.WAITING);
@@ -67,7 +78,7 @@ public class RoomService {
                                                        int totalRounds,
                                                        int roundTimeLimitMinutes,
                                                        GameMode gameMode) {
-        return updateRoomConfigByAdmin(roomId, maxPlayers, totalRounds, roundTimeLimitMinutes, gameMode,
+        return updateRoomConfigByAdmin(roomId, maxPlayers, totalRounds, roundTimeLimitMinutes, false, gameMode,
                 DrawPileRule.AUTO_REFILL);
     }
 
@@ -75,6 +86,17 @@ public class RoomService {
                                                        int maxPlayers,
                                                        int totalRounds,
                                                        int roundTimeLimitMinutes,
+                                                       GameMode gameMode,
+                                                       DrawPileRule drawPileRule) {
+        return updateRoomConfigByAdmin(roomId, maxPlayers, totalRounds, roundTimeLimitMinutes, false, gameMode,
+                drawPileRule);
+    }
+
+    public Map<String, Object> updateRoomConfigByAdmin(Long roomId,
+                                                       int maxPlayers,
+                                                       int totalRounds,
+                                                       int roundTimeLimitMinutes,
+                                                       boolean gameTimerEnabled,
                                                        GameMode gameMode,
                                                        DrawPileRule drawPileRule) {
         validateRoomConfig(maxPlayers, totalRounds, roundTimeLimitMinutes, gameMode);
@@ -92,6 +114,7 @@ public class RoomService {
         room.setMaxPlayers(maxPlayers);
         room.setTotalRounds(totalRounds);
         room.setRoundTimeLimitMinutes(roundTimeLimitMinutes);
+        room.setGameTimerEnabled(gameTimerEnabled);
         room.setGameMode(gameMode == null ? GameMode.CLASSIC : gameMode);
         room.setDrawPileRule(resolveDrawPileRule(gameMode, drawPileRule));
         return getRoomState(roomRepository.save(room));
@@ -201,6 +224,7 @@ public class RoomService {
             state.put("maxPlayers", room.getMaxPlayers());
             state.put("totalRounds", room.getTotalRounds());
             state.put("roundTimeLimitMinutes", room.getRoundTimeLimitMinutes());
+            state.put("gameTimerEnabled", room.isGameTimerEnabled());
             state.put("gameMode", room.getGameMode() == null ? GameMode.CLASSIC.name() : room.getGameMode().name());
             state.put("drawPileRule", room.getDrawPileRule() == null
                     ? DrawPileRule.AUTO_REFILL.name()

@@ -12,6 +12,7 @@ import com.uno.entity.enums.CardColor;
 import com.uno.entity.enums.CardType;
 import com.uno.entity.enums.GameMode;
 import com.uno.entity.enums.GameStatus;
+import com.uno.entity.enums.GameFinishReason;
 import com.uno.entity.enums.PendingDrawType;
 import com.uno.entity.enums.RoomStatus;
 import com.uno.model.Card;
@@ -31,6 +32,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -127,6 +129,104 @@ class GameServiceMultiplayerIntegrationTest {
         gameService.playCard(fixture.gameId(), fixture.userId(2), 0, null);
         assertPatch(lastPublicPatch(), fixture, 0, 0, 1, 0,
                 PendingDrawType.NONE, List.of(1, 1, 1), version);
+    }
+
+    @Test
+    void expiredGameTimerFinishesWithFewestCardsRanking() {
+        Fixture fixture = createGame(List.of(
+                List.of(number(CardColor.BLUE, 1), number(CardColor.BLUE, 2), number(CardColor.BLUE, 3)),
+                List.of(number(CardColor.GREEN, 4)),
+                List.of(number(CardColor.YELLOW, 5), number(CardColor.YELLOW, 6))
+        ), drawPile(12));
+
+        requiresNewTransaction().executeWithoutResult(status -> {
+            Game game = gameRepository.findById(fixture.gameId()).orElseThrow();
+            Room room = game.getRoom();
+            room.setGameTimerEnabled(true);
+            roomRepository.save(room);
+            game.setTimerEndsAtEpochMs(System.currentTimeMillis() - 1_000);
+            gameRepository.save(game);
+        });
+        publicPatches.clear();
+        clearInvocations(wsService);
+
+        gameService.finishExpiredTimedGames();
+
+        Game finished = gameRepository.findById(fixture.gameId()).orElseThrow();
+        assertEquals(GameStatus.FINISHED, finished.getStatus());
+        assertEquals(GameFinishReason.TIME_LIMIT, finished.getFinishReason());
+        assertEquals(fixture.userId(1), finished.getWinnerId());
+        assertNull(finished.getCurrentTurn());
+        assertEquals(RoomStatus.CLOSED, finished.getRoom().getStatus());
+        PublicGamePatch patch = lastPublicPatch();
+        assertEquals("GAME_FINISHED", patch.type());
+        assertEquals(GameFinishReason.TIME_LIMIT.name(), patch.finishReason());
+        assertEquals(List.of(3, 1, 2), patch.players().stream().map(player -> player.handCount()).toList());
+    }
+
+    @Test
+    void expiredGameTimerKeepsEqualLowestHandsAsJointWinners() {
+        Fixture fixture = createGame(List.of(
+                List.of(number(CardColor.BLUE, 1), number(CardColor.BLUE, 2)),
+                List.of(number(CardColor.GREEN, 3), number(CardColor.GREEN, 4)),
+                List.of(number(CardColor.YELLOW, 5), number(CardColor.YELLOW, 6), number(CardColor.YELLOW, 7))
+        ), drawPile(12));
+
+        requiresNewTransaction().executeWithoutResult(status -> {
+            Game game = gameRepository.findById(fixture.gameId()).orElseThrow();
+            Room room = game.getRoom();
+            room.setGameTimerEnabled(true);
+            roomRepository.save(room);
+            game.setTimerEndsAtEpochMs(System.currentTimeMillis() - 1_000);
+            gameRepository.save(game);
+        });
+        publicPatches.clear();
+        clearInvocations(wsService);
+
+        gameService.finishExpiredTimedGames();
+
+        Game finished = gameRepository.findById(fixture.gameId()).orElseThrow();
+        assertEquals(GameStatus.FINISHED, finished.getStatus());
+        assertEquals(GameFinishReason.TIME_LIMIT, finished.getFinishReason());
+        assertNull(finished.getWinnerId());
+        PublicGamePatch patch = lastPublicPatch();
+        assertNull(patch.winnerId());
+        assertTrue(patch.message().contains("tie for first"));
+        assertEquals(List.of(2, 2, 3), patch.players().stream().map(player -> player.handCount()).toList());
+        Map<String, Object> refreshedState = gameService.getGameState(fixture.gameId());
+        assertNull(refreshedState.get("winnerId"));
+        assertEquals(GameFinishReason.TIME_LIMIT.name(), refreshedState.get("finishReason"));
+    }
+
+    @Test
+    void expiredGameTimerTakesPriorityOverAPlayerAction() {
+        Fixture fixture = createGame(List.of(
+                List.of(number(CardColor.RED, 1), number(CardColor.BLUE, 2)),
+                List.of(number(CardColor.GREEN, 3))
+        ), drawPile(12));
+
+        requiresNewTransaction().executeWithoutResult(status -> {
+            Game game = gameRepository.findById(fixture.gameId()).orElseThrow();
+            Room room = game.getRoom();
+            room.setGameTimerEnabled(true);
+            roomRepository.save(room);
+            game.setTimerEndsAtEpochMs(System.currentTimeMillis() - 1_000);
+            gameRepository.save(game);
+        });
+        publicPatches.clear();
+        clearInvocations(wsService);
+
+        Map<String, Object> acknowledgement = gameService.drawCard(fixture.gameId(), fixture.userId(0));
+
+        assertEquals("GAME_FINISHED", acknowledgement.get("type"));
+        Game finished = gameRepository.findById(fixture.gameId()).orElseThrow();
+        assertEquals(GameStatus.FINISHED, finished.getStatus());
+        assertEquals(GameFinishReason.TIME_LIMIT, finished.getFinishReason());
+        assertEquals(fixture.userId(1), finished.getWinnerId());
+        assertEquals(List.of(2, 1), committedPlayers(fixture.gameId()).stream()
+                .map(player -> player.getHandCards().size())
+                .toList());
+        assertEquals("GAME_FINISHED", lastPublicPatch().type());
     }
 
     @Test

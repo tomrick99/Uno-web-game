@@ -66,6 +66,21 @@ class RoomServiceAdminUpdateTest {
     }
 
     @Test
+    void waitingRoomKeepsOptionalGameTimerConfiguration() {
+        Room room = room(1L, RoomStatus.WAITING, 4);
+        when(roomRepository.findById(1L)).thenReturn(Optional.of(room));
+        when(roomRepository.save(any(Room.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(gameRepository.findByRoom(room)).thenReturn(List.of());
+
+        Map<String, Object> state = roomService.updateRoomConfigByAdmin(
+                1L, 4, 8, 15, true, GameMode.CLASSIC, DrawPileRule.AUTO_REFILL);
+
+        assertEquals(true, room.isGameTimerEnabled());
+        assertEquals(15, room.getRoundTimeLimitMinutes());
+        assertEquals(true, state.get("gameTimerEnabled"));
+    }
+
+    @Test
     void classicRoomAlwaysUsesAutoRefill() {
         Room room = room(1L, RoomStatus.WAITING, 4);
         when(roomRepository.findById(1L)).thenReturn(Optional.of(room));
@@ -148,12 +163,15 @@ class RoomServiceAdminUpdateTest {
         when(gamePlayerRepository.findByGameOrderBySeatIndexAsc(game)).thenReturn(players);
         when(gamePlayerRepository.save(any(GamePlayer.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
+        long beforeStart = System.currentTimeMillis();
         Map<String, Object> state = gameService.updateRoomConfigByAdmin(
-                room.getId(), 2, 8, 10, GameMode.CLASSIC, 99L, "admin");
+                room.getId(), 2, 8, 10, true, GameMode.CLASSIC, DrawPileRule.AUTO_REFILL, 99L, "admin");
 
         assertEquals(2, room.getMaxPlayers());
         assertEquals(RoomStatus.PLAYING, room.getStatus());
         assertEquals(GameStatus.PLAYING, game.getStatus());
+        assertEquals(true, room.isGameTimerEnabled());
+        assertEquals(true, game.getTimerEndsAtEpochMs() >= beforeStart + 10 * 60_000L);
         assertEquals(alice.getUser().getId(), game.getCurrentTurn());
         assertEquals(List.of(7, 7), players.stream().map(player -> player.getHandCards().size()).toList());
         assertEquals(RoomStatus.PLAYING.name(), state.get("status"));
@@ -169,7 +187,7 @@ class RoomServiceAdminUpdateTest {
         verify(wsService, times(2)).sendPrivateHandPatch(any(), eq(room.getId()), eq(game.getId()), any(), any());
 
         assertThrows(IllegalArgumentException.class, () -> gameService.updateRoomConfigByAdmin(
-                room.getId(), 2, 8, 10, GameMode.CLASSIC, 99L, "admin"));
+                room.getId(), 2, 8, 10, true, GameMode.CLASSIC, DrawPileRule.AUTO_REFILL, 99L, "admin"));
         verify(wsService, times(1)).broadcastPublicGamePatch(any());
         verify(wsService, times(2)).sendPrivateHandPatch(any(), eq(room.getId()), eq(game.getId()), any(), any());
     }

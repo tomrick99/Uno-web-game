@@ -65,6 +65,7 @@ public class RoomController {
                     safeRequest.getMaxPlayers(),
                     safeRequest.getTotalRounds(),
                     safeRequest.getRoundTimeLimitMinutes(),
+                    safeRequest.isGameTimerEnabled(),
                     safeRequest.getGameMode(),
                     safeRequest.getDrawPileRule());
             gameService.joinGame(room.getId(), user.getId());

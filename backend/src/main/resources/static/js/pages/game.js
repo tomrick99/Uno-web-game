@@ -14,6 +14,10 @@ createApp({
         const roomStatus = ref("WAITING");
         const maxPlayers = ref(2);
         const roundTimeLimitMinutes = ref(10);
+        const gameTimerEnabled = ref(false);
+        const timerEndsAtEpochMs = ref(null);
+        const remainingTimeMs = ref(0);
+        const finishReason = ref(null);
         const gameMode = ref("CLASSIC");
         const drawPileRule = ref("AUTO_REFILL");
         const userId = ref(localStorage.getItem("userId"));
@@ -81,6 +85,8 @@ createApp({
         let pendingRealtimeBatchTimer = null;
         let gameStartConsistencyTimer = null;
         let lastGameStartConsistencyKey = null;
+        let countdownTimer = null;
+        let serverClockOffsetMs = 0;
 
         const colorMap = {
             RED: "#E74C3C",
@@ -152,7 +158,11 @@ createApp({
                 rematch: "再来一局",
                 gameOver: "游戏结束",
                 wins: "获胜",
+                jointFirst: "{names} 并列第一！",
+                tieSubtitle: "本局出现并列第一，可以返回大厅或申请再来一局。",
                 finalRanking: "最终排名",
+                timeRemaining: "剩余时间",
+                timeLimitReached: "倒计时结束",
                 playerLeftTitle: "有玩家退出",
                 playerLeftContinue: "{name} 已退出游戏。是否由剩余玩家继续当前游戏？",
                 continueGame: "继续游戏",
@@ -238,7 +248,11 @@ createApp({
                 rematch: "Rematch",
                 gameOver: "Game over",
                 wins: "wins",
+                jointFirst: "{names} tie for first!",
+                tieSubtitle: "This game ended with a tie for first. You can return to the lobby or rematch.",
                 finalRanking: "Final ranking",
+                timeRemaining: "Time left",
+                timeLimitReached: "Time limit reached",
                 playerLeftTitle: "Player Left",
                 playerLeftContinue: "{name} left the game. Continue with the remaining players?",
                 continueGame: "Continue Game",
@@ -354,6 +368,24 @@ createApp({
         };
         const currentColorLabel = computed(() => colorName(currentColor.value));
         const connectionLabel = computed(() => t(connectionMode.value));
+        const countdownText = computed(() => {
+            const totalSeconds = Math.max(0, Math.ceil(Number(remainingTimeMs.value || 0) / 1000));
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = String(totalSeconds % 60).padStart(2, "0");
+            return `${minutes}:${seconds}`;
+        });
+        const countdownUrgent = computed(() => gameStatus.value === "PLAYING"
+            && remainingTimeMs.value > 0
+            && remainingTimeMs.value <= 60_000);
+
+        const updateCountdown = () => {
+            if (!gameTimerEnabled.value || !timerEndsAtEpochMs.value || gameStatus.value !== "PLAYING") {
+                remainingTimeMs.value = 0;
+                return;
+            }
+            remainingTimeMs.value = Math.max(0,
+                Number(timerEndsAtEpochMs.value) - (Date.now() + serverClockOffsetMs));
+        };
 
         const getCardDisplay = (type, value) => {
             if (type === "NUMBER") return String(value);
@@ -749,26 +781,56 @@ createApp({
 
         const buildGameResult = (gameState) => {
             const players = Array.isArray(gameState.players) ? gameState.players : [];
+            const resolvedFinishReason = gameState.finishReason ?? finishReason.value;
+            const isTimeLimitResult = resolvedFinishReason === "TIME_LIMIT";
             const winner = players.find((player) => String(player.userId) === String(gameState.winnerId));
-            const showFinalRanking = drawPileRule.value === "FINITE_DRAW_PILE"
-                && Number(gameState.drawPileSize ?? drawPileSize.value) === 0;
-            const ranking = showFinalRanking
-                ? [...players]
-                    .sort((first, second) => {
-                        const handDifference = Number(first.handCount ?? 0) - Number(second.handCount ?? 0);
-                        if (handDifference !== 0) return handDifference;
-                        return Number(first.seatIndex ?? Number.MAX_SAFE_INTEGER)
-                            - Number(second.seatIndex ?? Number.MAX_SAFE_INTEGER);
-                    })
-                    .map((player, index) => ({
+            const showFinalRanking = resolvedFinishReason === "TIME_LIMIT"
+                || (drawPileRule.value === "FINITE_DRAW_PILE"
+                    && Number(gameState.drawPileSize ?? drawPileSize.value) === 0);
+            const sortedPlayers = showFinalRanking
+                ? [...players].sort((first, second) => {
+                    const handDifference = Number(first.handCount ?? 0) - Number(second.handCount ?? 0);
+                    if (handDifference !== 0) return handDifference;
+                    return Number(first.seatIndex ?? Number.MAX_SAFE_INTEGER)
+                        - Number(second.seatIndex ?? Number.MAX_SAFE_INTEGER);
+                })
+                : [];
+            const lowestHandCount = sortedPlayers.length > 0
+                ? Number(sortedPlayers[0].handCount ?? 0)
+                : null;
+            const timeLimitFirstPlacePlayers = isTimeLimitResult
+                ? sortedPlayers.filter((player) => Number(player.handCount ?? 0) === lowestHandCount)
+                : [];
+            const isTimeLimitTie = timeLimitFirstPlacePlayers.length > 1;
+            let previousHandCount = null;
+            let previousRank = 0;
+            const ranking = sortedPlayers.map((player, index) => {
+                const handCount = Number(player.handCount ?? 0);
+                const rank = isTimeLimitResult && previousHandCount === handCount
+                    ? previousRank
+                    : index + 1;
+                previousHandCount = handCount;
+                previousRank = rank;
+                return {
                         userId: player.userId,
                         username: player.username,
-                        handCount: Number(player.handCount ?? 0),
-                        rank: index + 1,
-                        isWinner: String(player.userId) === String(gameState.winnerId),
+                        handCount,
+                        rank,
+                        isWinner: isTimeLimitResult
+                            ? handCount === lowestHandCount
+                            : String(player.userId) === String(gameState.winnerId),
                         isCurrentUser: String(player.userId) === String(userId.value)
-                    }))
-                : [];
+                    };
+            });
+            const currentUserIsJointWinner = timeLimitFirstPlacePlayers.some(
+                (player) => String(player.userId) === String(userId.value)
+            );
+            const didCurrentUserWin = isTimeLimitResult
+                ? currentUserIsJointWinner
+                : String(gameState.winnerId) === String(userId.value);
+            const jointWinnerNames = timeLimitFirstPlacePlayers
+                .map((player) => player.username)
+                .join(language.value === "zh" ? "、" : ", ");
             const readyIds = Array.isArray(gameState.rematchReadyPlayerIds) ? gameState.rematchReadyPlayerIds : [];
             const playerIds = new Set(
                 players
@@ -792,8 +854,16 @@ createApp({
             const statusText = `${t("rematchReadyCount", { ready: readyCount, total: totalPlayers })} · ${readinessText}`;
 
             return {
-                win: String(gameState.winnerId) === String(userId.value),
-                title: winner ? `${winner.username} ${t("wins")}!` : t("gameOver"),
+                win: didCurrentUserWin,
+                tie: isTimeLimitTie,
+                title: isTimeLimitResult
+                    ? `${t("timeLimitReached")} · ${isTimeLimitTie
+                        ? t("jointFirst", { names: jointWinnerNames })
+                        : (winner ? `${winner.username} ${t("wins")}!` : t("gameOver"))}`
+                    : (winner ? `${winner.username} ${t("wins")}!` : t("gameOver")),
+                subtitle: isTimeLimitTie
+                    ? t("tieSubtitle")
+                    : (didCurrentUserWin ? t("winSubtitle") : t("loseSubtitle")),
                 showFinalRanking,
                 ranking,
                 statusText,
@@ -820,6 +890,10 @@ createApp({
             roomStatus.value = "WAITING";
             maxPlayers.value = 2;
             roundTimeLimitMinutes.value = 10;
+            gameTimerEnabled.value = false;
+            timerEndsAtEpochMs.value = null;
+            remainingTimeMs.value = 0;
+            finishReason.value = null;
             gameMode.value = "CLASSIC";
             drawPileRule.value = "AUTO_REFILL";
             roomPlayerCount.value = 0;
@@ -907,6 +981,7 @@ createApp({
         const applyRoomConfig = (state) => {
             maxPlayers.value = Number(state.maxPlayers || maxPlayers.value || 2);
             roundTimeLimitMinutes.value = Number(state.roundTimeLimitMinutes || roundTimeLimitMinutes.value || 10);
+            if (hasOwnField(state, "gameTimerEnabled")) gameTimerEnabled.value = Boolean(state.gameTimerEnabled);
             gameMode.value = state.gameMode || gameMode.value || "CLASSIC";
             drawPileRule.value = state.drawPileRule || drawPileRule.value || "AUTO_REFILL";
         };
@@ -1014,6 +1089,10 @@ createApp({
                 copyField("lastPenaltyPlayerId");
                 copyField("drawPileSize");
                 copyField("winnerId");
+                copyField("gameTimerEnabled");
+                copyField("timerEndsAtEpochMs");
+                copyField("finishReason");
+                if (hasOwnField(payload, "timestamp")) gameState.serverTime = payload.timestamp;
                 copyField("rematchReadyPlayerIds");
                 if (hasOwnField(payload, "direction")) {
                     gameState.clockwise = payload.direction !== -1;
@@ -1193,6 +1272,13 @@ createApp({
             if (hasOwnField(gameState, "pendingDrawType")) pendingDrawType.value = gameState.pendingDrawType ?? "NONE";
             if (hasOwnField(gameState, "lastPenaltyPlayerId")) lastPenaltyPlayerId.value = gameState.lastPenaltyPlayerId;
             if (hasOwnField(gameState, "drawPileSize")) drawPileSize.value = Number(gameState.drawPileSize ?? 0);
+            if (hasOwnField(gameState, "gameTimerEnabled")) gameTimerEnabled.value = Boolean(gameState.gameTimerEnabled);
+            if (hasOwnField(gameState, "timerEndsAtEpochMs")) timerEndsAtEpochMs.value = gameState.timerEndsAtEpochMs;
+            if (hasOwnField(gameState, "finishReason")) finishReason.value = gameState.finishReason;
+            if (hasOwnField(gameState, "serverTime") && Number.isFinite(Number(gameState.serverTime))) {
+                serverClockOffsetMs = Number(gameState.serverTime) - Date.now();
+            }
+            updateCountdown();
             if (hasOwnField(gameState, "topCard") && gameState.topCard) {
                 topCard.value = {
                     ...gameState.topCard,
@@ -1892,6 +1978,7 @@ createApp({
             console.info("[UNO-GAME] roomId from URL =", roomId.value);
             console.info("[UNO-GAME] websocket endpoint =", websocketEndpoint);
             applyLanguage();
+            countdownTimer = setInterval(updateCountdown, 250);
             try {
                 const response = await axios.get(`${apiBase}/user/me`);
                 if (response.data.code !== 200) {
@@ -1934,6 +2021,10 @@ createApp({
             shouldReconnect = false;
             cleanupRealtime();
             clearAutoPenaltyTimer();
+            if (countdownTimer) {
+                clearInterval(countdownTimer);
+                countdownTimer = null;
+            }
             if (beforeUnloadHandler) window.removeEventListener("beforeunload", beforeUnloadHandler);
             if (delegatedButtonHandler) document.removeEventListener("click", delegatedButtonHandler);
         });
@@ -1944,6 +2035,9 @@ createApp({
             roomStatus,
             maxPlayers,
             roundTimeLimitMinutes,
+            gameTimerEnabled,
+            remainingTimeMs,
+            gameStatus,
             gameMode,
             drawPileRule,
             language,
@@ -1994,6 +2088,8 @@ createApp({
             gameModeLabel,
             drawPileRuleLabel,
             connectionLabel,
+            countdownText,
+            countdownUrgent,
             languageLabel,
             selectedCardInfo,
             modeRuleLines,

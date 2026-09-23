@@ -17,6 +17,7 @@ createApp({
         const editForm = reactive({
             maxPlayers: 2,
             roundTimeLimitMinutes: 10,
+            gameTimerEnabled: false,
             gameMode: "CLASSIC",
             drawPileRule: "AUTO_REFILL"
         });
@@ -96,6 +97,7 @@ createApp({
             editingRoom.value = room;
             editForm.maxPlayers = Number(room.maxPlayers || 2);
             editForm.roundTimeLimitMinutes = Number(room.roundTimeLimitMinutes || 10);
+            editForm.gameTimerEnabled = Boolean(room.gameTimerEnabled);
             editForm.gameMode = room.gameMode || "CLASSIC";
             editForm.drawPileRule = room.drawPileRule || "AUTO_REFILL";
             showEdit.value = true;
@@ -115,6 +117,7 @@ createApp({
                 const res = await axios.put(`${apiBase}/admin/rooms/${editingRoom.value.roomId}`, {
                     maxPlayers: editForm.maxPlayers,
                     roundTimeLimitMinutes: editForm.roundTimeLimitMinutes,
+                    gameTimerEnabled: editForm.gameTimerEnabled,
                     gameMode: editForm.gameMode,
                     drawPileRule: editForm.gameMode === "NO_MERCY" ? editForm.drawPileRule : "AUTO_REFILL"
                 });

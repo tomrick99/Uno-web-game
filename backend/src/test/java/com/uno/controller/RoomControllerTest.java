@@ -85,6 +85,7 @@ class RoomControllerTest {
                                int maxPlayers,
                                int totalRounds,
                                int roundTimeLimitMinutes,
+                               boolean gameTimerEnabled,
                                GameMode gameMode,
                                DrawPileRule drawPileRule) {
             return room;

@@ -17,6 +17,7 @@ createApp({
         const showCreate = ref(false);
         const maxPlayers = ref(2);
         const roundTimeLimitMinutes = ref(10);
+        const gameTimerEnabled = ref(false);
         const gameMode = ref("CLASSIC");
         const drawPileRule = ref("AUTO_REFILL");
         const language = ref(localStorage.getItem("unoLanguage") || "zh");
@@ -56,6 +57,12 @@ createApp({
                 customGame: "自定义游戏",
                 players: "玩家人数",
                 roundTime: "单局时长",
+                gameTimer: "整局倒计时",
+                gameDuration: "倒计时时长",
+                timerOn: "开启倒计时",
+                timerOff: "不开倒计时",
+                timerOnHelp: "时间到后按剩余手牌数量结算，手牌越少排名越高。",
+                timerOffHelp: "按原有规则进行，整局没有时间限制。",
                 mode: "模式",
                 cancel: "取消",
                 create: "创建",
@@ -102,6 +109,12 @@ createApp({
                 customGame: "Custom Game",
                 players: "Players",
                 roundTime: "Round Time",
+                gameTimer: "Game countdown",
+                gameDuration: "Countdown duration",
+                timerOn: "Countdown on",
+                timerOff: "No countdown",
+                timerOnHelp: "When time expires, fewer remaining cards earns a higher rank.",
+                timerOffHelp: "Play with the existing rules and no overall time limit.",
                 mode: "Mode",
                 cancel: "Cancel",
                 create: "Create",
@@ -567,6 +580,7 @@ createApp({
                 const payload = {
                     maxPlayers: maxPlayers.value,
                     roundTimeLimitMinutes: roundTimeLimitMinutes.value,
+                    gameTimerEnabled: gameTimerEnabled.value,
                     gameMode: gameMode.value,
                     drawPileRule: gameMode.value === "NO_MERCY" ? drawPileRule.value : "AUTO_REFILL"
                 };
@@ -671,6 +685,7 @@ createApp({
             showCreate,
             maxPlayers,
             roundTimeLimitMinutes,
+            gameTimerEnabled,
             gameMode,
             drawPileRule,
             language,

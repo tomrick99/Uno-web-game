@@ -13,6 +13,7 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import com.uno.entity.enums.GameFinishReason;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -58,6 +59,13 @@ public class Game {
 
     @Column(name = "winner_id")
     private Long winnerId;
+
+    @Column(name = "timer_ends_at_epoch_ms")
+    private Long timerEndsAtEpochMs;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "finish_reason", length = 50)
+    private GameFinishReason finishReason;
 
     @Column(name = "draw_pile", columnDefinition = "TEXT")
     private String drawPileJson;
@@ -110,6 +118,12 @@ public class Game {
 
     public Long getWinnerId() { return winnerId; }
     public void setWinnerId(Long winnerId) { this.winnerId = winnerId; }
+
+    public Long getTimerEndsAtEpochMs() { return timerEndsAtEpochMs; }
+    public void setTimerEndsAtEpochMs(Long timerEndsAtEpochMs) { this.timerEndsAtEpochMs = timerEndsAtEpochMs; }
+
+    public GameFinishReason getFinishReason() { return finishReason; }
+    public void setFinishReason(GameFinishReason finishReason) { this.finishReason = finishReason; }
 
     public String getDrawPileJson() { return drawPileJson; }
     public void setDrawPileJson(String drawPileJson) { this.drawPileJson = drawPileJson; }

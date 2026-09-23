@@ -68,6 +68,27 @@
     font-size: 12px;
 }
 
+.countdown-chip {
+    min-width: 112px;
+    justify-content: center;
+    border-color: rgba(52, 152, 219, 0.55);
+    background: rgba(52, 152, 219, 0.12);
+}
+
+.countdown-chip strong {
+    min-width: 44px;
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.04em;
+    text-align: center;
+}
+
+.countdown-chip.urgent {
+    border-color: rgba(231, 76, 60, 0.8);
+    background: rgba(231, 76, 60, 0.16);
+    box-shadow: 0 0 14px rgba(231, 76, 60, 0.24);
+}
+
 .connection .status-dot {
     width: 9px;
     height: 9px;
@@ -1204,6 +1225,10 @@
 
 .result-card h2.lose {
     color: var(--red);
+}
+
+.result-card h2.tie {
+    color: var(--yellow);
 }
 
 @media (max-width: 520px) {

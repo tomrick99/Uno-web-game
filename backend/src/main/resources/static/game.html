@@ -41,6 +41,10 @@
                     <span class="status-label">{{ t("drawPile") }}</span>
                     <span>{{ drawPileRuleLabel }}</span>
                 </div>
+                <div v-if="gameTimerEnabled && gameStatus === 'PLAYING'" class="status-chip countdown-chip" :class="{ urgent: countdownUrgent }" role="timer" aria-live="off">
+                    <span class="status-label">{{ t("timeRemaining") }}</span>
+                    <strong>{{ countdownText }}</strong>
+                </div>
                 <div class="status-chip">
                     <span class="status-label">{{ t("players") }}</span>
                     <span>{{ playerCount }}/{{ maxPlayers }}</span>
@@ -248,9 +252,9 @@
 
         <div v-if="gameResult" class="modal-overlay">
             <div class="modal-card result-card">
-                <h2 :class="{ win: gameResult.win, lose: !gameResult.win }">{{ gameResult.title }}</h2>
+                <h2 :class="{ win: gameResult.win && !gameResult.tie, lose: !gameResult.win && !gameResult.tie, tie: gameResult.tie }">{{ gameResult.title }}</h2>
                 <p class="result-subtitle">
-                    {{ gameResult.win ? t("winSubtitle") : t("loseSubtitle") }}
+                    {{ gameResult.subtitle }}
                 </p>
                 <section v-if="gameResult.showFinalRanking" class="final-ranking" :aria-label="t('finalRanking')">
                     <h3>{{ t("finalRanking") }}</h3>

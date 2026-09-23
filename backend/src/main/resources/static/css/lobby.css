@@ -380,6 +380,22 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.timer-section {
+    display: grid;
+    gap: 8px;
+}
+
+.timer-duration-options {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.timer-help {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
 .option-chip {
     min-height: 42px;
     padding: 9px 10px;
