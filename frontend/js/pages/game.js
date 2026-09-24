@@ -44,6 +44,7 @@ createApp({
         const gameLog = ref([]);
         const logExpanded = ref(false);
         const rulesExpanded = ref(false);
+        const statusExpanded = ref(false);
         const gameResult = ref(null);
         const continuationPrompt = ref(null);
         const toastMsg = ref("");
@@ -162,6 +163,8 @@ createApp({
                 tieSubtitle: "本局出现并列第一，可以返回大厅或申请再来一局。",
                 finalRanking: "最终排名",
                 timeRemaining: "剩余时间",
+                showStatus: "展开状态信息",
+                hideStatus: "收起状态信息",
                 timeLimitReached: "倒计时结束",
                 playerLeftTitle: "有玩家退出",
                 playerLeftContinue: "{name} 已退出游戏。是否由剩余玩家继续当前游戏？",
@@ -252,6 +255,8 @@ createApp({
                 tieSubtitle: "This game ended with a tie for first. You can return to the lobby or rematch.",
                 finalRanking: "Final ranking",
                 timeRemaining: "Time left",
+                showStatus: "Show game status",
+                hideStatus: "Hide game status",
                 timeLimitReached: "Time limit reached",
                 playerLeftTitle: "Player Left",
                 playerLeftContinue: "{name} left the game. Continue with the remaining players?",
@@ -2063,6 +2068,7 @@ createApp({
             gameLog,
             logExpanded,
             rulesExpanded,
+            statusExpanded,
             gameResult,
             continuationPrompt,
             toastMsg,

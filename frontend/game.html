@@ -12,7 +12,11 @@
     <link rel="stylesheet" href="css/game.css">
 </head>
 <body>
-    <div id="app" v-cloak>
+    <div
+        id="app"
+        v-cloak
+        :class="{ 'expanded-mobile-controls': (selectedCard !== null && needsColorPick) || showPenaltyNotice }"
+    >
         <div class="bg-animation">
             <div class="circle c1"></div>
             <div class="circle c2"></div>
@@ -24,7 +28,25 @@
                 <span class="room-code">{{ t("room") }}: {{ roomCode || roomId }}</span>
                 <span class="turn-indicator" :class="{ 'my-turn': isMyTurn }">{{ turnLabel }}</span>
             </div>
-            <div class="status-panel">
+            <div class="compact-status-summary" aria-live="polite">
+                <strong v-if="gameTimerEnabled && gameStatus === 'PLAYING'" class="compact-countdown" :class="{ urgent: countdownUrgent }">{{ countdownText }}</strong>
+                <span class="compact-color">
+                    <span class="current-color" :style="{ background: colorMap[currentColor] || '#777' }"></span>
+                    <span>{{ currentColorLabel }}</span>
+                </span>
+            </div>
+            <button
+                type="button"
+                class="status-menu-toggle"
+                :class="{ active: statusExpanded }"
+                :aria-expanded="statusExpanded"
+                aria-controls="gameStatusDetails"
+                :aria-label="statusExpanded ? t('hideStatus') : t('showStatus')"
+                @click="statusExpanded = !statusExpanded"
+            >
+                <span aria-hidden="true">…</span>
+            </button>
+            <div id="gameStatusDetails" class="status-panel" :class="{ expanded: statusExpanded }">
                 <div class="status-chip connection" :class="{ offline: !wsConnected }">
                     <span class="status-dot"></span>
                     <span>{{ connectionLabel }}</span>
@@ -174,60 +196,72 @@
                 </div>
             </div>
 
-            <div class="action-buttons" v-if="selectedCard !== null">
-                <div
-                    v-if="needsColorPick"
-                    class="wild-color-picker"
-                    :class="{ selected: chosenColor }"
-                    role="group"
-                    :aria-label="t('colorSelectionTitle')"
-                >
-                    <div class="color-picker-title">{{ t("colorSelectionTitle") }}</div>
-                    <div
-                        id="wildColorSelectionStatus"
-                        class="color-picker-status"
-                        :class="{ pending: !chosenColor }"
-                        aria-live="polite"
-                    >
-                        {{ chosenColor ? t("colorSelected", { color: colorName(chosenColor) }) : t("chooseColor") }}
-                    </div>
-                    <div class="wild-color-options">
-                        <button type="button" class="btn-color-pick red" :class="{ selected: chosenColor === 'RED' }" :aria-pressed="chosenColor === 'RED'" @click="pickColor('RED')">
-                            <span>{{ colorName("RED") }}</span>
-                        </button>
-                        <button type="button" class="btn-color-pick blue" :class="{ selected: chosenColor === 'BLUE' }" :aria-pressed="chosenColor === 'BLUE'" @click="pickColor('BLUE')">
-                            <span>{{ colorName("BLUE") }}</span>
-                        </button>
-                        <button type="button" class="btn-color-pick green" :class="{ selected: chosenColor === 'GREEN' }" :aria-pressed="chosenColor === 'GREEN'" @click="pickColor('GREEN')">
-                            <span>{{ colorName("GREEN") }}</span>
-                        </button>
-                        <button type="button" class="btn-color-pick yellow" :class="{ selected: chosenColor === 'YELLOW' }" :aria-pressed="chosenColor === 'YELLOW'" @click="pickColor('YELLOW')">
-                            <span>{{ colorName("YELLOW") }}</span>
-                        </button>
-                    </div>
-                </div>
+            <div class="interaction-controls">
                 <button
-                    id="playSelectedCardButton"
+                    v-if="!showPenaltyNotice"
                     type="button"
-                    class="btn-play"
-                    :disabled="!canPlaySelected || playingCard"
-                    :aria-describedby="needsColorPick ? 'wildColorSelectionStatus' : null"
-                    @click="playSelectedCard"
+                    class="mobile-draw-action btn-primary"
+                    :disabled="!canDraw || drawingCard"
+                    @click="drawCardAction"
                 >
-                    {{ playingCard ? t("playing") : t("playCard") }}
+                    {{ drawingCard ? t("drawing") : t("drawCards") }}
                 </button>
-            </div>
 
-            <div v-if="showPenaltyNotice" class="penalty-panel">
-                <div class="penalty-text">{{ penaltyNoticeText }}</div>
-                <button
-                    v-if="showDrawPenaltyButton"
-                    id="drawPenaltyButton"
-                    class="btn-primary"
-                    :disabled="drawingPenalty"
-                >
-                    {{ drawPenaltyButtonText }}
-                </button>
+                <div class="action-buttons" v-if="selectedCard !== null">
+                    <div
+                        v-if="needsColorPick"
+                        class="wild-color-picker"
+                        :class="{ selected: chosenColor }"
+                        role="group"
+                        :aria-label="t('colorSelectionTitle')"
+                    >
+                        <div class="color-picker-title">{{ t("colorSelectionTitle") }}</div>
+                        <div
+                            id="wildColorSelectionStatus"
+                            class="color-picker-status"
+                            :class="{ pending: !chosenColor }"
+                            aria-live="polite"
+                        >
+                            {{ chosenColor ? t("colorSelected", { color: colorName(chosenColor) }) : t("chooseColor") }}
+                        </div>
+                        <div class="wild-color-options">
+                            <button type="button" class="btn-color-pick red" :class="{ selected: chosenColor === 'RED' }" :aria-pressed="chosenColor === 'RED'" @click="pickColor('RED')">
+                                <span>{{ colorName("RED") }}</span>
+                            </button>
+                            <button type="button" class="btn-color-pick blue" :class="{ selected: chosenColor === 'BLUE' }" :aria-pressed="chosenColor === 'BLUE'" @click="pickColor('BLUE')">
+                                <span>{{ colorName("BLUE") }}</span>
+                            </button>
+                            <button type="button" class="btn-color-pick green" :class="{ selected: chosenColor === 'GREEN' }" :aria-pressed="chosenColor === 'GREEN'" @click="pickColor('GREEN')">
+                                <span>{{ colorName("GREEN") }}</span>
+                            </button>
+                            <button type="button" class="btn-color-pick yellow" :class="{ selected: chosenColor === 'YELLOW' }" :aria-pressed="chosenColor === 'YELLOW'" @click="pickColor('YELLOW')">
+                                <span>{{ colorName("YELLOW") }}</span>
+                            </button>
+                        </div>
+                    </div>
+                    <button
+                        id="playSelectedCardButton"
+                        type="button"
+                        class="btn-play"
+                        :disabled="!canPlaySelected || playingCard"
+                        :aria-describedby="needsColorPick ? 'wildColorSelectionStatus' : null"
+                        @click="playSelectedCard"
+                    >
+                        {{ playingCard ? t("playing") : t("playCard") }}
+                    </button>
+                </div>
+
+                <div v-if="showPenaltyNotice" class="penalty-panel">
+                    <div class="penalty-text">{{ penaltyNoticeText }}</div>
+                    <button
+                        v-if="showDrawPenaltyButton"
+                        id="drawPenaltyButton"
+                        class="btn-primary"
+                        :disabled="drawingPenalty"
+                    >
+                        {{ drawPenaltyButtonText }}
+                    </button>
+                </div>
             </div>
         </section>
 
