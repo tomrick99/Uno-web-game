@@ -85,6 +85,7 @@ class GameWebSocketServiceTest {
                 true,
                 123456L,
                 654321L,
+                List.of(),
                 null,
                 List.of(new PublicPlayerInfo(1L, "alice", null, 4, 0, false, false, false)),
                 null,

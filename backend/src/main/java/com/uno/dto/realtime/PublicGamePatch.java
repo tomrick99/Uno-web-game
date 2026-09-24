@@ -27,6 +27,7 @@ public record PublicGamePatch(
         Boolean gameTimerEnabled,
         Long timerEndsAtEpochMs,
         Long turnEndsAtEpochMs,
+        List<Map<String, Object>> unoWindows,
         String finishReason,
         List<PublicPlayerInfo> players,
         Long winnerId,

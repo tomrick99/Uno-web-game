@@ -176,6 +176,73 @@
     box-shadow: 0 0 14px rgba(231, 76, 60, 0.24);
 }
 
+.uno-action-stack {
+    position: fixed;
+    top: 76px;
+    left: 50%;
+    z-index: 34;
+    display: grid;
+    width: min(520px, calc(100vw - 24px));
+    gap: 7px;
+    transform: translateX(-50%);
+    pointer-events: none;
+}
+
+.uno-action-card {
+    display: flex;
+    min-height: 46px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    box-sizing: border-box;
+    padding: 7px 8px 7px 14px;
+    border: 1px solid rgba(255, 214, 66, 0.72);
+    border-radius: 16px;
+    background: rgba(15, 15, 32, 0.96);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38);
+    color: #fff7cf;
+    backdrop-filter: blur(14px);
+    pointer-events: auto;
+}
+
+.uno-action-card.challenge {
+    border-color: rgba(231, 76, 60, 0.76);
+    color: #ffe0dc;
+}
+
+.uno-action-copy {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 14px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.uno-action-button {
+    flex: 0 0 auto;
+    min-width: 112px;
+    min-height: 38px;
+    padding: 7px 14px;
+    border: 0;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #f1c40f, #f39c12);
+    color: #181818;
+    font-weight: 900;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.uno-action-card.challenge .uno-action-button {
+    background: linear-gradient(135deg, #ff6b5f, #e74c3c);
+    color: #fff;
+}
+
+.uno-action-button:disabled {
+    opacity: 0.58;
+    cursor: wait;
+}
+
 .turn-countdown-chip {
     min-width: 96px;
     justify-content: center;
@@ -1710,6 +1777,26 @@
         color: #ffd6d1;
     }
 
+    .uno-action-stack {
+        top: calc(var(--responsive-header-height) + 6px);
+        width: min(460px, calc(100vw - 16px));
+    }
+
+    .uno-action-card {
+        min-height: 44px;
+        padding: 5px 6px 5px 11px;
+    }
+
+    .uno-action-copy {
+        font-size: 12px;
+    }
+
+    .uno-action-button {
+        min-width: 96px;
+        min-height: 38px;
+        padding: 6px 10px;
+    }
+
     .compact-turn-countdown {
         padding: 5px 8px;
         border-radius: 999px;
@@ -2206,6 +2293,12 @@
         flex-wrap: nowrap;
         padding: 6px 8px;
         overflow: visible;
+    }
+
+    .uno-action-stack {
+        top: 61px;
+        left: 29vw;
+        width: min(430px, calc(58vw - 16px));
     }
 
     .room-code {

@@ -111,6 +111,25 @@
             </div>
         </header>
 
+        <section v-if="unoActions.length" class="uno-action-stack" aria-live="polite" :aria-label="t('callUno')">
+            <div
+                v-for="action in unoActions"
+                :key="action.targetUserId"
+                class="uno-action-card"
+                :class="{ own: action.isOwn, challenge: !action.isOwn }"
+            >
+                <span class="uno-action-copy">{{ action.prompt }} · {{ action.remainingSeconds }}s</span>
+                <button
+                    type="button"
+                    class="uno-action-button"
+                    :disabled="unoActionPendingTargetId !== null"
+                    @click="action.isOwn ? callUno(action.targetUserId) : challengeUno(action.targetUserId)"
+                >
+                    {{ unoActionPendingTargetId === String(action.targetUserId) ? t("submitting") : action.actionLabel }}
+                </button>
+            </div>
+        </section>
+
         <main class="table-stage">
             <section class="players-area" :aria-label="t('players')">
                 <div
