@@ -422,10 +422,12 @@ createApp({
             return (Array.isArray(unoWindows.value) ? unoWindows.value : [])
                 .map((windowState) => {
                     const targetUserId = windowState?.targetUserId;
+                    const windowId = windowState?.windowId;
                     const remainingMs = Number(windowState?.endsAtEpochMs || 0) - unoNowMs.value;
                     const isOwn = String(targetUserId) === String(userId.value);
                     return {
                         targetUserId,
+                        windowId,
                         targetUsername: windowState?.targetUsername || t("players"),
                         isOwn,
                         remainingMs,
@@ -436,7 +438,7 @@ createApp({
                         actionLabel: isOwn ? t("callUno") : t("challengeUno")
                     };
                 })
-                .filter((action) => action.targetUserId != null && action.remainingMs > 0)
+                .filter((action) => action.targetUserId != null && action.windowId != null && action.remainingMs > 0)
                 .sort((left, right) => Number(right.isOwn) - Number(left.isOwn)
                     || left.remainingMs - right.remainingMs);
         });
@@ -1999,13 +2001,16 @@ createApp({
             }
         };
 
-        const submitUnoAction = async (targetUserId, isOwn) => {
+        const submitUnoAction = async (targetUserId, windowId, isOwn) => {
             if (!gameId.value || unoActionPendingTargetId.value != null) return;
             const targetKey = String(targetUserId);
             unoActionPendingTargetId.value = targetKey;
             try {
                 const endpoint = isOwn ? "uno-call" : "uno-challenge";
-                const query = isOwn ? "" : `?targetUserId=${encodeURIComponent(targetUserId)}`;
+                const queryParams = new URLSearchParams();
+                queryParams.set("windowId", String(windowId));
+                if (!isOwn) queryParams.set("targetUserId", String(targetUserId));
+                const query = `?${queryParams.toString()}`;
                 const response = await axios.post(`${apiBase}/game/${gameId.value}/${endpoint}${query}`);
                 if (response.data.code !== 200) {
                     showToastMessage(response.data.message || t("unoActionFailed"));
@@ -2021,8 +2026,8 @@ createApp({
             }
         };
 
-        const callUno = (targetUserId) => submitUnoAction(targetUserId, true);
-        const challengeUno = (targetUserId) => submitUnoAction(targetUserId, false);
+        const callUno = (targetUserId, windowId) => submitUnoAction(targetUserId, windowId, true);
+        const challengeUno = (targetUserId, windowId) => submitUnoAction(targetUserId, windowId, false);
 
         const playSelectedCard = async () => {
             if (selectedCard.value === null || playingCard.value) return;

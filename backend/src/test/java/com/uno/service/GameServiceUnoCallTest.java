@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -42,15 +43,16 @@ class GameServiceUnoCallTest {
         Fixture fixture = fixture();
         fixture.service.playCard(20L, 1L, 0, null);
         assertEquals(1, ((List<?>) fixture.service.getGameState(20L).get("unoWindows")).size());
+        long windowId = activeWindowId(fixture);
 
-        Map<String, Object> callAck = fixture.service.callUno(20L, 1L);
+        Map<String, Object> callAck = fixture.service.callUno(20L, 1L, windowId);
 
         assertEquals("UNO_CALLED", callAck.get("type"));
         assertTrue(fixture.alice.isSaidUno());
         assertEquals(1, fixture.alice.getHandCards().size());
         assertEquals(List.of(), fixture.service.getGameState(20L).get("unoWindows"));
         assertThrows(IllegalArgumentException.class,
-                () -> fixture.service.challengeUno(20L, 2L, 1L));
+                () -> fixture.service.challengeUno(20L, 2L, 1L, windowId));
         assertEquals(1, fixture.alice.getHandCards().size());
     }
 
@@ -58,15 +60,16 @@ class GameServiceUnoCallTest {
     void challengeDrawsTwoCardsAndCannotBeAppliedTwice() {
         Fixture fixture = fixture();
         fixture.service.playCard(20L, 1L, 0, null);
+        long windowId = activeWindowId(fixture);
 
-        Map<String, Object> challengeAck = fixture.service.challengeUno(20L, 2L, 1L);
+        Map<String, Object> challengeAck = fixture.service.challengeUno(20L, 2L, 1L, windowId);
 
         assertEquals("UNO_CHALLENGED", challengeAck.get("type"));
         assertEquals(2, challengeAck.get("drawCount"));
         assertEquals(3, fixture.alice.getHandCards().size());
         assertFalse(fixture.alice.isSaidUno());
         assertThrows(IllegalArgumentException.class,
-                () -> fixture.service.challengeUno(20L, 2L, 1L));
+                () -> fixture.service.challengeUno(20L, 2L, 1L, windowId));
         assertEquals(3, fixture.alice.getHandCards().size());
     }
 
@@ -74,12 +77,14 @@ class GameServiceUnoCallTest {
     void simultaneousCallAndChallengeHaveExactlyOneWinner() throws Exception {
         Fixture fixture = fixture();
         fixture.service.playCard(20L, 1L, 0, null);
+        long windowId = activeWindowId(fixture);
         CountDownLatch start = new CountDownLatch(1);
         AtomicInteger successes = new AtomicInteger();
         ExecutorService executor = Executors.newFixedThreadPool(2);
 
-        executor.submit(() -> attempt(start, successes, () -> fixture.service.callUno(20L, 1L)));
-        executor.submit(() -> attempt(start, successes, () -> fixture.service.challengeUno(20L, 2L, 1L)));
+        executor.submit(() -> attempt(start, successes, () -> fixture.service.callUno(20L, 1L, windowId)));
+        executor.submit(() -> attempt(start, successes,
+                () -> fixture.service.challengeUno(20L, 2L, 1L, windowId)));
         start.countDown();
         executor.shutdown();
         assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
@@ -90,17 +95,80 @@ class GameServiceUnoCallTest {
     }
 
     @Test
-    void expiredWindowDisappearsWithoutPenalty() throws Exception {
+    void expiredWindowClosesWithoutPenaltyAndAllowsANewWindow() throws Exception {
         Fixture fixture = fixture();
         fixture.service.playCard(20L, 1L, 0, null);
+        long firstWindowId = activeWindowId(fixture);
         Thread.sleep(GameService.UNO_CALL_WINDOW_MS + 100L);
 
         fixture.service.finishExpiredTimedGames();
 
         assertThrows(IllegalArgumentException.class,
-                () -> fixture.service.challengeUno(20L, 2L, 1L));
+                () -> fixture.service.challengeUno(20L, 2L, 1L, firstWindowId));
         assertEquals(1, fixture.alice.getHandCards().size());
         assertEquals(List.of(), fixture.service.getGameState(20L).get("unoWindows"));
+
+        fixture.service.drawCard(20L, 2L);
+        fixture.service.drawCard(20L, 1L);
+        fixture.service.drawCard(20L, 2L);
+        fixture.service.playCard(20L, 1L, 0, null);
+
+        long secondWindowId = activeWindowId(fixture);
+        assertNotEquals(firstWindowId, secondWindowId);
+        assertThrows(IllegalArgumentException.class,
+                () -> fixture.service.challengeUno(20L, 2L, 1L, firstWindowId));
+        fixture.service.callUno(20L, 1L, secondWindowId);
+        fixture.service.finishExpiredTimedGames();
+        assertEquals(1, fixture.alice.getHandCards().size());
+    }
+
+    @Test
+    void successfulCallDoesNotBlockANewWindowForTheSamePlayer() {
+        Fixture fixture = fixture();
+        fixture.service.playCard(20L, 1L, 0, null);
+        long firstWindowId = activeWindowId(fixture);
+        fixture.service.callUno(20L, 1L, firstWindowId);
+
+        fixture.service.drawCard(20L, 2L);
+        fixture.service.drawCard(20L, 1L);
+        fixture.service.drawCard(20L, 2L);
+        fixture.service.playCard(20L, 1L, 0, null);
+
+        long secondWindowId = activeWindowId(fixture);
+        assertNotEquals(firstWindowId, secondWindowId);
+        assertFalse(fixture.alice.isSaidUno());
+        assertThrows(IllegalArgumentException.class,
+                () -> fixture.service.callUno(20L, 1L, firstWindowId));
+        assertEquals("UNO_CALLED", fixture.service.callUno(20L, 1L, secondWindowId).get("type"));
+    }
+
+    @Test
+    void successfulChallengeDoesNotBlockANewWindowOrAllowOldEventReuse() {
+        Fixture fixture = fixture();
+        fixture.service.playCard(20L, 1L, 0, null);
+        long firstWindowId = activeWindowId(fixture);
+        fixture.service.challengeUno(20L, 2L, 1L, firstWindowId);
+
+        fixture.service.drawCard(20L, 2L);
+        fixture.service.playCard(20L, 1L, 0, null);
+        fixture.service.drawCard(20L, 2L);
+        fixture.service.playCard(20L, 1L, 0, null);
+
+        long secondWindowId = activeWindowId(fixture);
+        assertNotEquals(firstWindowId, secondWindowId);
+        assertThrows(IllegalArgumentException.class,
+                () -> fixture.service.challengeUno(20L, 2L, 1L, firstWindowId));
+        assertEquals(1, fixture.alice.getHandCards().size());
+        fixture.service.challengeUno(20L, 2L, 1L, secondWindowId);
+        assertEquals(3, fixture.alice.getHandCards().size());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static long activeWindowId(Fixture fixture) {
+        List<Map<String, Object>> windows =
+                (List<Map<String, Object>>) fixture.service.getGameState(20L).get("unoWindows");
+        assertEquals(1, windows.size());
+        return ((Number) windows.get(0).get("windowId")).longValue();
     }
 
     private static void attempt(CountDownLatch start, AtomicInteger successes, Runnable action) {
@@ -142,8 +210,11 @@ class GameServiceUnoCallTest {
         game.setCurrentColor(CardColor.RED);
         game.setTurnEndsAtEpochMs(System.currentTimeMillis() + 30_000L);
         game.setDrawPileJson("[{\"color\":\"RED\",\"type\":\"NUMBER\",\"value\":3},"
-                + "{\"color\":\"YELLOW\",\"type\":\"NUMBER\",\"value\":4},"
-                + "{\"color\":\"GREEN\",\"type\":\"NUMBER\",\"value\":5}]");
+                + "{\"color\":\"RED\",\"type\":\"NUMBER\",\"value\":4},"
+                + "{\"color\":\"RED\",\"type\":\"NUMBER\",\"value\":5},"
+                + "{\"color\":\"RED\",\"type\":\"NUMBER\",\"value\":6},"
+                + "{\"color\":\"RED\",\"type\":\"NUMBER\",\"value\":7},"
+                + "{\"color\":\"RED\",\"type\":\"NUMBER\",\"value\":8}]");
         game.setDiscardPileJson("[{\"color\":\"RED\",\"type\":\"NUMBER\",\"value\":9}]");
 
         GamePlayer alice = player(game, aliceUser, 0, List.of(

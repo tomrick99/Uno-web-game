@@ -55,9 +55,14 @@ public class GameService {
 
     private record PlayValidation(boolean playable, String reason) {}
 
-    private record UnoCallWindow(Long targetUserId,
+    private record UnoCallWindow(long windowId,
+                                 Long targetUserId,
                                  String targetUsername,
                                  long endsAtEpochMs) {}
+
+    private record ExpiringUnoWindow(Long gameId,
+                                     Long targetUserId,
+                                     long windowId) {}
 
     private record PrivateHandPatchDelivery(String username,
                                             Long roomId,
@@ -77,6 +82,7 @@ public class GameService {
     private final RoomService roomService;
     private final ConcurrentHashMap<Long, ReentrantLock> roomLocks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, AtomicLong> roomStateVersions = new ConcurrentHashMap<>();
+    private final AtomicLong unoWindowSequence = new AtomicLong();
     private final ConcurrentHashMap<Long, ConcurrentHashMap<Long, UnoCallWindow>> unoWindowsByGame =
             new ConcurrentHashMap<>();
 
@@ -210,19 +216,24 @@ public class GameService {
         return wsService.broadcastPlayerReaction(roomId, gameId, userId, user.getUsername(), emoji);
     }
 
-    public Map<String, Object> callUno(Long gameId, Long userId) {
+    public Map<String, Object> callUno(Long gameId, Long userId, Long windowId) {
         Long roomId = getRoomIdByGameId(gameId);
         return withRoomLock(roomId, () -> {
             Map<String, Object> timeoutAck = resolveExpiredDeadlinesBeforeAction(gameId, roomId);
-            return timeoutAck != null ? timeoutAck : doCallUno(gameId, userId);
+            return timeoutAck != null ? timeoutAck : doCallUno(gameId, userId, windowId);
         });
     }
 
-    public Map<String, Object> challengeUno(Long gameId, Long challengerUserId, Long targetUserId) {
+    public Map<String, Object> challengeUno(Long gameId,
+                                             Long challengerUserId,
+                                             Long targetUserId,
+                                             Long windowId) {
         Long roomId = getRoomIdByGameId(gameId);
         return withRoomLock(roomId, () -> {
             Map<String, Object> timeoutAck = resolveExpiredDeadlinesBeforeAction(gameId, roomId);
-            return timeoutAck != null ? timeoutAck : doChallengeUno(gameId, challengerUserId, targetUserId);
+            return timeoutAck != null
+                    ? timeoutAck
+                    : doChallengeUno(gameId, challengerUserId, targetUserId, windowId);
         });
     }
 
@@ -630,7 +641,7 @@ public class GameService {
         return true;
     }
 
-    private Map<String, Object> doCallUno(Long gameId, Long userId) {
+    private Map<String, Object> doCallUno(Long gameId, Long userId, Long windowId) {
         Game game = gameRepository.findById(gameId)
                 .orElseThrow(() -> new IllegalArgumentException("Game not found"));
         if (game.getStatus() != GameStatus.PLAYING) {
@@ -640,7 +651,10 @@ public class GameService {
         GamePlayer player = findPlayer(game, userId,
                 "Only players in this game can call UNO");
         UnoCallWindow window = getActiveUnoWindow(gameId, userId, System.currentTimeMillis());
-        if (window == null || player.getHandCards().size() != 1) {
+        if (window == null
+                || windowId == null
+                || window.windowId() != windowId
+                || player.getHandCards().size() != 1) {
             throw new IllegalArgumentException("There is no active UNO call window for you");
         }
 
@@ -661,7 +675,8 @@ public class GameService {
 
     private Map<String, Object> doChallengeUno(Long gameId,
                                                 Long challengerUserId,
-                                                Long targetUserId) {
+                                                Long targetUserId,
+                                                Long windowId) {
         if (targetUserId == null) {
             throw new IllegalArgumentException("UNO challenge target is required");
         }
@@ -680,7 +695,11 @@ public class GameService {
         GamePlayer target = findPlayer(game, targetUserId,
                 "The challenged player is no longer in this game");
         UnoCallWindow window = getActiveUnoWindow(gameId, targetUserId, System.currentTimeMillis());
-        if (window == null || target.isSaidUno() || target.getHandCards().size() != 1) {
+        if (window == null
+                || windowId == null
+                || window.windowId() != windowId
+                || target.isSaidUno()
+                || target.getHandCards().size() != 1) {
             throw new IllegalArgumentException("That UNO challenge is no longer available");
         }
 
@@ -740,6 +759,7 @@ public class GameService {
                 .orElseThrow(() -> new IllegalArgumentException("Player is not in this game"));
 
         List<Card> hand = sortHandCards(player.getHandCards());
+        int handCountBeforePlay = hand.size();
         if (cardIndex < 0 || cardIndex >= hand.size()) {
             throw new IllegalArgumentException("Invalid card index");
         }
@@ -799,7 +819,7 @@ public class GameService {
         gamePlayerRepository.save(player);
         if (gameFinished) {
             clearUnoWindows(gameId);
-        } else if (player.getHandCards().size() == 1) {
+        } else if (handCountBeforePlay > 1 && player.getHandCards().size() == 1) {
             openUnoWindow(game, player, System.currentTimeMillis());
         } else {
             closeUnoWindow(gameId, userId);
@@ -1725,14 +1745,16 @@ public class GameService {
 
     private void openUnoWindow(Game game, GamePlayer player, long now) {
         UnoCallWindow window = new UnoCallWindow(
+                unoWindowSequence.incrementAndGet(),
                 player.getUser().getId(),
                 player.getUser().getUsername(),
                 now + UNO_CALL_WINDOW_MS);
         unoWindowsByGame
                 .computeIfAbsent(game.getId(), ignored -> new ConcurrentHashMap<>())
                 .put(player.getUser().getId(), window);
-        log.info("[UNO] call window opened roomId={} gameId={} target={} endsAt={}",
-                game.getRoom().getId(), game.getId(), player.getUser().getId(), window.endsAtEpochMs());
+        log.info("[UNO] call window opened roomId={} gameId={} target={} windowId={} endsAt={}",
+                game.getRoom().getId(), game.getId(), player.getUser().getId(),
+                window.windowId(), window.endsAtEpochMs());
     }
 
     private UnoCallWindow getActiveUnoWindow(Long gameId, Long targetUserId, long now) {
@@ -1752,6 +1774,7 @@ public class GameService {
                         .thenComparing(UnoCallWindow::targetUserId))
                 .map(window -> {
                     Map<String, Object> state = new LinkedHashMap<>();
+                    state.put("windowId", window.windowId());
                     state.put("targetUserId", window.targetUserId());
                     state.put("targetUsername", window.targetUsername());
                     state.put("endsAtEpochMs", window.endsAtEpochMs());
@@ -1778,13 +1801,15 @@ public class GameService {
     }
 
     private void expireUnoWindows(long now) {
-        List<Long> candidateGameIds = unoWindowsByGame.entrySet().stream()
-                .filter(entry -> entry.getValue().values().stream()
-                        .anyMatch(window -> window.endsAtEpochMs() <= now))
-                .map(Map.Entry::getKey)
+        List<ExpiringUnoWindow> candidates = unoWindowsByGame.entrySet().stream()
+                .flatMap(entry -> entry.getValue().values().stream()
+                        .filter(window -> window.endsAtEpochMs() <= now)
+                        .map(window -> new ExpiringUnoWindow(
+                                entry.getKey(), window.targetUserId(), window.windowId())))
                 .toList();
 
-        for (Long gameId : candidateGameIds) {
+        for (ExpiringUnoWindow candidateWindow : candidates) {
+            Long gameId = candidateWindow.gameId();
             Game candidate = gameRepository.findById(gameId).orElse(null);
             if (candidate == null || candidate.getRoom() == null) {
                 clearUnoWindows(gameId);
@@ -1798,15 +1823,21 @@ public class GameService {
                     clearUnoWindows(gameId);
                     return null;
                 }
-                boolean removed = gameWindows.entrySet().removeIf(
-                        entry -> entry.getValue().endsAtEpochMs() <= System.currentTimeMillis());
+                UnoCallWindow currentWindow = gameWindows.get(candidateWindow.targetUserId());
+                long currentTime = System.currentTimeMillis();
+                if (currentWindow == null
+                        || currentWindow.windowId() != candidateWindow.windowId()
+                        || currentWindow.endsAtEpochMs() > currentTime) {
+                    return null;
+                }
+                if (!gameWindows.remove(candidateWindow.targetUserId(), currentWindow)) {
+                    return null;
+                }
                 if (gameWindows.isEmpty()) {
                     unoWindowsByGame.remove(gameId, gameWindows);
                 }
-                if (!removed || game.getStatus() != GameStatus.PLAYING) {
-                    if (game.getStatus() != GameStatus.PLAYING) {
-                        clearUnoWindows(gameId);
-                    }
+                if (game.getStatus() != GameStatus.PLAYING) {
+                    clearUnoWindows(gameId);
                     return null;
                 }
 
@@ -1816,8 +1847,8 @@ public class GameService {
                         game, players, "UNO_WINDOW_EXPIRED", null, null, null);
                 publishAfterCommit("unoWindowExpired",
                         () -> wsService.broadcastPublicGamePatch(publicPatch));
-                log.info("[UNO] call window expired roomId={} gameId={} version={}",
-                        roomId, gameId, version);
+                log.info("[UNO] call window expired roomId={} gameId={} target={} windowId={} version={}",
+                        roomId, gameId, candidateWindow.targetUserId(), candidateWindow.windowId(), version);
                 return null;
             });
         }

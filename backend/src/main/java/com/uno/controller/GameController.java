@@ -158,14 +158,16 @@ public class GameController {
     }
 
     @PostMapping("/{gameId}/uno-call")
-    public ApiResponse<Map<String, Object>> callUno(@PathVariable Long gameId, HttpSession session) {
+    public ApiResponse<Map<String, Object>> callUno(@PathVariable Long gameId,
+                                                     @RequestParam Long windowId,
+                                                     HttpSession session) {
         Long userId = getCurrentUserId(session);
         if (userId == null) {
             return unauthorized();
         }
 
         try {
-            return ApiResponse.success("UNO called", gameService.callUno(gameId, userId));
+            return ApiResponse.success("UNO called", gameService.callUno(gameId, userId, windowId));
         } catch (IllegalArgumentException e) {
             return ApiResponse.error(400, e.getMessage());
         } catch (RuntimeException e) {
@@ -176,6 +178,7 @@ public class GameController {
     @PostMapping("/{gameId}/uno-challenge")
     public ApiResponse<Map<String, Object>> challengeUno(@PathVariable Long gameId,
                                                           @RequestParam Long targetUserId,
+                                                          @RequestParam Long windowId,
                                                           HttpSession session) {
         Long userId = getCurrentUserId(session);
         if (userId == null) {
@@ -184,7 +187,7 @@ public class GameController {
 
         try {
             return ApiResponse.success("UNO challenge accepted",
-                    gameService.challengeUno(gameId, userId, targetUserId));
+                    gameService.challengeUno(gameId, userId, targetUserId, windowId));
         } catch (IllegalArgumentException e) {
             return ApiResponse.error(400, e.getMessage());
         } catch (RuntimeException e) {
