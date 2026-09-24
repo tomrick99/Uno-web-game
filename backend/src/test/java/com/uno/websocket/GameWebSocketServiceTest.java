@@ -84,6 +84,7 @@ class GameWebSocketServiceTest {
                 "PLAYING",
                 true,
                 123456L,
+                654321L,
                 null,
                 List.of(new PublicPlayerInfo(1L, "alice", null, 4, 0, false, false, false)),
                 null,
@@ -100,6 +101,7 @@ class GameWebSocketServiceTest {
         assertEquals(12345L, sentPatch.version());
         assertEquals("NONE", sentPatch.pendingDrawType());
         assertEquals(42, sentPatch.drawPileSize());
+        assertEquals(654321L, sentPatch.turnEndsAtEpochMs());
         assertEquals(List.of(), sentPatch.rematchReadyPlayerIds());
         assertFalse(sentPatch.getClass().getRecordComponents()[0].getName().equals("handCards"));
         assertNull(findRecordComponent(sentPatch, "handCards"));

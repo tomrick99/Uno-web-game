@@ -38,6 +38,9 @@ public class GamePlayer {
     @Column(name = "rematch_ready")
     private boolean rematchReady = false;
 
+    @Column(name = "consecutive_turn_timeouts", nullable = false)
+    private int consecutiveTurnTimeouts = 0;
+
     @Column(name = "joined_at")
     private LocalDateTime joinedAt;
 
@@ -110,6 +113,11 @@ public class GamePlayer {
 
     public boolean isRematchReady() { return rematchReady; }
     public void setRematchReady(boolean rematchReady) { this.rematchReady = rematchReady; }
+
+    public int getConsecutiveTurnTimeouts() { return consecutiveTurnTimeouts; }
+    public void setConsecutiveTurnTimeouts(int consecutiveTurnTimeouts) {
+        this.consecutiveTurnTimeouts = Math.max(0, consecutiveTurnTimeouts);
+    }
 
     public LocalDateTime getJoinedAt() { return joinedAt; }
     public void setJoinedAt(LocalDateTime joinedAt) { this.joinedAt = joinedAt; }

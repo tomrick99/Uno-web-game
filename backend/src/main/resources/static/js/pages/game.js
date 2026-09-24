@@ -17,6 +17,8 @@ createApp({
         const gameTimerEnabled = ref(false);
         const timerEndsAtEpochMs = ref(null);
         const remainingTimeMs = ref(0);
+        const turnEndsAtEpochMs = ref(null);
+        const turnRemainingTimeMs = ref(0);
         const finishReason = ref(null);
         const gameMode = ref("CLASSIC");
         const drawPileRule = ref("AUTO_REFILL");
@@ -168,6 +170,7 @@ createApp({
                 tieSubtitle: "本局出现并列第一，可以返回大厅或申请再来一局。",
                 finalRanking: "最终排名",
                 timeRemaining: "剩余时间",
+                turnTimeRemaining: "本回合",
                 showStatus: "展开状态信息",
                 hideStatus: "收起状态信息",
                 reactions: "发送表情",
@@ -263,6 +266,7 @@ createApp({
                 tieSubtitle: "This game ended with a tie for first. You can return to the lobby or rematch.",
                 finalRanking: "Final ranking",
                 timeRemaining: "Time left",
+                turnTimeRemaining: "Turn",
                 showStatus: "Show game status",
                 hideStatus: "Hide game status",
                 reactions: "Send a reaction",
@@ -393,14 +397,28 @@ createApp({
         const countdownUrgent = computed(() => gameStatus.value === "PLAYING"
             && remainingTimeMs.value > 0
             && remainingTimeMs.value <= 60_000);
+        const turnCountdownText = computed(() => {
+            const totalSeconds = Math.max(0, Math.ceil(Number(turnRemainingTimeMs.value || 0) / 1000));
+            return `0:${String(totalSeconds).padStart(2, "0")}`;
+        });
+        const turnCountdownUrgent = computed(() => gameStatus.value === "PLAYING"
+            && turnRemainingTimeMs.value > 0
+            && turnRemainingTimeMs.value <= 10_000);
 
         const updateCountdown = () => {
             if (!gameTimerEnabled.value || !timerEndsAtEpochMs.value || gameStatus.value !== "PLAYING") {
                 remainingTimeMs.value = 0;
+            } else {
+                remainingTimeMs.value = Math.max(0,
+                    Number(timerEndsAtEpochMs.value) - (Date.now() + serverClockOffsetMs));
+            }
+
+            if (!turnEndsAtEpochMs.value || gameStatus.value !== "PLAYING") {
+                turnRemainingTimeMs.value = 0;
                 return;
             }
-            remainingTimeMs.value = Math.max(0,
-                Number(timerEndsAtEpochMs.value) - (Date.now() + serverClockOffsetMs));
+            turnRemainingTimeMs.value = Math.max(0,
+                Number(turnEndsAtEpochMs.value) - (Date.now() + serverClockOffsetMs));
         };
 
         const getCardDisplay = (type, value) => {
@@ -925,6 +943,8 @@ createApp({
             reactionPickerOpen.value = false;
             gameStatus.value = "FINISHED";
             currentTurn.value = null;
+            turnEndsAtEpochMs.value = null;
+            turnRemainingTimeMs.value = 0;
             pendingDrawCount.value = 0;
             pendingDrawType.value = "NONE";
             autoPenaltyInProgress.value = false;
@@ -942,6 +962,8 @@ createApp({
             gameTimerEnabled.value = false;
             timerEndsAtEpochMs.value = null;
             remainingTimeMs.value = 0;
+            turnEndsAtEpochMs.value = null;
+            turnRemainingTimeMs.value = 0;
             finishReason.value = null;
             gameMode.value = "CLASSIC";
             drawPileRule.value = "AUTO_REFILL";
@@ -1141,6 +1163,7 @@ createApp({
                 copyField("winnerId");
                 copyField("gameTimerEnabled");
                 copyField("timerEndsAtEpochMs");
+                copyField("turnEndsAtEpochMs");
                 copyField("finishReason");
                 if (hasOwnField(payload, "timestamp")) gameState.serverTime = payload.timestamp;
                 copyField("rematchReadyPlayerIds");
@@ -1324,6 +1347,7 @@ createApp({
             if (hasOwnField(gameState, "drawPileSize")) drawPileSize.value = Number(gameState.drawPileSize ?? 0);
             if (hasOwnField(gameState, "gameTimerEnabled")) gameTimerEnabled.value = Boolean(gameState.gameTimerEnabled);
             if (hasOwnField(gameState, "timerEndsAtEpochMs")) timerEndsAtEpochMs.value = gameState.timerEndsAtEpochMs;
+            if (hasOwnField(gameState, "turnEndsAtEpochMs")) turnEndsAtEpochMs.value = gameState.turnEndsAtEpochMs;
             if (hasOwnField(gameState, "finishReason")) finishReason.value = gameState.finishReason;
             if (hasOwnField(gameState, "serverTime") && Number.isFinite(Number(gameState.serverTime))) {
                 serverClockOffsetMs = Number(gameState.serverTime) - Date.now();
@@ -2116,6 +2140,8 @@ createApp({
             roundTimeLimitMinutes,
             gameTimerEnabled,
             remainingTimeMs,
+            turnEndsAtEpochMs,
+            turnRemainingTimeMs,
             gameStatus,
             gameMode,
             drawPileRule,
@@ -2174,6 +2200,8 @@ createApp({
             connectionLabel,
             countdownText,
             countdownUrgent,
+            turnCountdownText,
+            turnCountdownUrgent,
             languageLabel,
             selectedCardInfo,
             modeRuleLines,

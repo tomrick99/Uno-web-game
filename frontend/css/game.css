@@ -176,6 +176,27 @@
     box-shadow: 0 0 14px rgba(231, 76, 60, 0.24);
 }
 
+.turn-countdown-chip {
+    min-width: 96px;
+    justify-content: center;
+    border-color: rgba(243, 156, 18, 0.58);
+    background: rgba(243, 156, 18, 0.13);
+}
+
+.turn-countdown-chip strong {
+    min-width: 38px;
+    color: #fff4cf;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.04em;
+    text-align: center;
+}
+
+.turn-countdown-chip.urgent {
+    border-color: rgba(231, 76, 60, 0.82);
+    background: rgba(231, 76, 60, 0.18);
+    box-shadow: 0 0 14px rgba(231, 76, 60, 0.25);
+}
+
 .connection .status-dot {
     width: 9px;
     height: 9px;
@@ -1686,6 +1707,20 @@
 
     .compact-countdown.urgent {
         background: rgba(231, 76, 60, 0.2);
+        color: #ffd6d1;
+    }
+
+    .compact-turn-countdown {
+        padding: 5px 8px;
+        border-radius: 999px;
+        background: rgba(243, 156, 18, 0.17);
+        color: #fff4cf;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+
+    .compact-turn-countdown.urgent {
+        background: rgba(231, 76, 60, 0.22);
         color: #ffd6d1;
     }
 
