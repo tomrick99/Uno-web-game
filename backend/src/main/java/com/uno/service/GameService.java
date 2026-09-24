@@ -37,6 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
@@ -47,6 +48,7 @@ import java.util.function.Supplier;
 public class GameService {
 
     private static final Logger log = LoggerFactory.getLogger(GameService.class);
+    private static final Set<String> ALLOWED_REACTIONS = Set.of("😂", "😭", "😡", "👍", "🎉", "😱");
 
     private record PlayValidation(boolean playable, String reason) {}
 
@@ -348,6 +350,26 @@ public class GameService {
                     snapshot.get("version"));
             return snapshot;
         });
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> sendReaction(Long roomId, Long userId, String emoji) {
+        String normalizedEmoji = emoji == null ? "" : emoji.trim();
+        if (!ALLOWED_REACTIONS.contains(normalizedEmoji)) {
+            throw new IllegalArgumentException("Unsupported reaction");
+        }
+
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
+        Game game = gameRepository.findByRoom(room).stream()
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
+        gamePlayerRepository.findByGameAndUser(game, user)
+                .orElseThrow(() -> new IllegalArgumentException("Player is not in this game"));
+
+        return wsService.broadcastPlayerReaction(roomId, userId, user.getUsername(), normalizedEmoji);
     }
 
     @Transactional(readOnly = true)

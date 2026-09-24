@@ -151,6 +151,75 @@
     background: rgba(255, 255, 255, 0.18);
 }
 
+/* 短暂表情互动 */
+.reaction-control {
+    position: fixed;
+    top: 82px;
+    right: 64px;
+    z-index: 60;
+}
+
+.reaction-launcher {
+    display: grid;
+    width: 46px;
+    height: 46px;
+    place-items: center;
+    padding: 0;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    background: rgba(24, 24, 50, 0.94);
+    color: white;
+    font-size: 24px;
+    cursor: pointer;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+    backdrop-filter: blur(10px);
+}
+
+.reaction-launcher:hover,
+.reaction-launcher.active {
+    border-color: rgba(243, 156, 18, 0.9);
+    transform: translateY(-1px);
+}
+
+.reaction-launcher:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.reaction-picker {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    display: grid;
+    grid-template-columns: repeat(3, 46px);
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 14px;
+    background: rgba(18, 18, 42, 0.97);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.38);
+    backdrop-filter: blur(12px);
+}
+
+.reaction-option {
+    width: 46px;
+    height: 44px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.07);
+    font-size: 25px;
+    cursor: pointer;
+}
+
+.reaction-option:hover,
+.reaction-option:focus-visible {
+    border-color: rgba(255, 255, 255, 0.34);
+    background: rgba(255, 255, 255, 0.15);
+    transform: scale(1.06);
+}
+
 /* 牌桌与环绕座位 */
 .table-stage {
     position: relative;
@@ -212,6 +281,40 @@
 .table-player.seat-slot-5 { left: 77%; top: 15%; }
 .table-player.seat-slot-6 { left: 90%; top: 58%; }
 .table-player.seat-slot-7 { left: 75%; top: 84%; }
+
+.player-reaction {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 7px);
+    z-index: 5;
+    min-width: 44px;
+    padding: 5px 9px;
+    border: 2px solid rgba(255, 255, 255, 0.78);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.96);
+    color: #16162c;
+    font-size: 30px;
+    line-height: 1.15;
+    text-align: center;
+    pointer-events: none;
+    transform: translateX(-50%);
+    box-shadow: 0 7px 20px rgba(0, 0, 0, 0.32);
+    animation: reaction-pop 2.6s ease-out forwards;
+}
+
+.table-player.seat-slot-3 .player-reaction,
+.table-player.seat-slot-4 .player-reaction,
+.table-player.seat-slot-5 .player-reaction {
+    top: calc(100% + 7px);
+    bottom: auto;
+}
+
+@keyframes reaction-pop {
+    0% { opacity: 0; transform: translateX(-50%) translateY(8px) scale(0.55); }
+    12% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1.12); }
+    24%, 78% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+    100% { opacity: 0; transform: translateX(-50%) translateY(-12px) scale(0.92); }
+}
 
 .table-player.current-turn,
 .opponent.current-turn {
@@ -1502,6 +1605,28 @@
         overflow: visible;
     }
 
+    .reaction-control {
+        top: 62px;
+        right: 58px;
+        z-index: 39;
+    }
+
+    .reaction-launcher {
+        width: 42px;
+        height: 42px;
+        font-size: 22px;
+    }
+
+    .reaction-picker {
+        grid-template-columns: repeat(3, 43px);
+    }
+
+    .reaction-option {
+        width: 43px;
+        height: 41px;
+        font-size: 23px;
+    }
+
     .game-info {
         flex: 1 1 auto;
         min-width: 0;
@@ -1772,6 +1897,10 @@
 }
 
 @media (max-width: 768px) {
+    .reaction-control {
+        right: 9px;
+    }
+
     .game-top-bar {
         gap: 6px;
         flex-direction: row;
@@ -2022,6 +2151,12 @@
         font-size: 9px;
     }
 
+    .player-reaction {
+        min-width: 35px;
+        padding: 4px 7px;
+        font-size: 24px;
+    }
+
     .table-player.seat-slot-0 { top: 90%; }
     .table-player.seat-slot-1 { left: 25%; top: 82%; }
     .table-player.seat-slot-2 { left: 14%; top: 57%; }
@@ -2171,6 +2306,10 @@
 
 @media (prefers-reduced-motion: reduce) {
     .direction-arrow {
+        animation: none;
+    }
+
+    .player-reaction {
         animation: none;
     }
 }

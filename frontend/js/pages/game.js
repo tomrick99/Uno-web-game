@@ -66,6 +66,9 @@ createApp({
         const hasLoadedHand = ref(false);
         const autoPenaltyInProgress = ref(false);
         const lastAutoPenaltyKey = ref("");
+        const reactionPickerOpen = ref(false);
+        const sendingReaction = ref(false);
+        const activeReactions = ref({});
 
         const stompClient = shallowRef(null);
         const roomSubscription = ref(null);
@@ -88,6 +91,7 @@ createApp({
         let lastGameStartConsistencyKey = null;
         let countdownTimer = null;
         let serverClockOffsetMs = 0;
+        const reactionTimers = new Map();
 
         const colorMap = {
             RED: "#E74C3C",
@@ -105,6 +109,9 @@ createApp({
                 cardsUnit: "张牌",
                 me: "我",
                 avatar: "头像",
+                reactions: "表情",
+                sendReaction: "发送表情",
+                reactionFailed: "表情发送失败",
                 currentColor: "当前颜色",
                 backToLobby: "返回大厅",
                 canDraw: "可以抽牌",
@@ -197,6 +204,9 @@ createApp({
                 cardsUnit: "cards",
                 me: "Me",
                 avatar: "avatar",
+                reactions: "Reactions",
+                sendReaction: "Send reaction",
+                reactionFailed: "Could not send reaction",
                 currentColor: "Color",
                 backToLobby: "Back to Lobby",
                 canDraw: "You can draw",
@@ -355,6 +365,56 @@ createApp({
         const getPlayerSeatClass = (index) => {
             const slots = seatSlotsByCount[orderedTablePlayers.value.length] || seatSlotsByCount[8];
             return `seat-slot-${slots[index] ?? index % 8}`;
+        };
+
+        const reactionOptions = ["😂", "😭", "😡", "👍", "🎉", "😱"];
+        const showPlayerReaction = (payload) => {
+            const senderId = payload?.userId;
+            if (senderId === null || senderId === undefined) return;
+            if (String(payload.roomId) !== String(roomId.value)) return;
+            if (!reactionOptions.includes(payload.emoji)) return;
+            if (!tablePlayers.value.some((player) => String(player.userId) === String(senderId))) return;
+
+            const key = String(senderId);
+            const durationMs = Math.min(3000, Math.max(2000, Number(payload.durationMs) || 2600));
+            const reactionId = payload.reactionId || `${key}-${Date.now()}`;
+            activeReactions.value = {
+                ...activeReactions.value,
+                [key]: { id: reactionId, emoji: payload.emoji }
+            };
+            if (reactionTimers.has(key)) clearTimeout(reactionTimers.get(key));
+            reactionTimers.set(key, setTimeout(() => {
+                if (activeReactions.value[key]?.id !== reactionId) return;
+                const nextReactions = { ...activeReactions.value };
+                delete nextReactions[key];
+                activeReactions.value = nextReactions;
+                reactionTimers.delete(key);
+            }, durationMs));
+        };
+
+        const clearPlayerReactions = () => {
+            for (const timer of reactionTimers.values()) clearTimeout(timer);
+            reactionTimers.clear();
+            activeReactions.value = {};
+            reactionPickerOpen.value = false;
+            sendingReaction.value = false;
+        };
+
+        const sendReaction = async (emoji) => {
+            if (sendingReaction.value || !roomId.value || !reactionOptions.includes(emoji)) return;
+            sendingReaction.value = true;
+            reactionPickerOpen.value = false;
+            try {
+                const response = await axios.post(`${apiBase}/game/${roomId.value}/reaction`, { emoji });
+                if (response.data?.code !== 200) {
+                    throw new Error(response.data?.message || t("reactionFailed"));
+                }
+                showPlayerReaction(response.data.data);
+            } catch (error) {
+                showToastMessage(error.response?.data?.message || error.message || t("reactionFailed"), "error");
+            } finally {
+                sendingReaction.value = false;
+            }
         };
 
         const languageLabel = computed(() => language.value === "zh" ? "EN" : "中文");
@@ -890,6 +950,7 @@ createApp({
         };
 
         const resetLocalState = () => {
+            clearPlayerReactions();
             roomId.value = null;
             roomCode.value = "";
             roomStatus.value = "WAITING";
@@ -940,6 +1001,7 @@ createApp({
 
         const cleanupRealtime = () => {
             clearAutoPenaltyTimer();
+            clearPlayerReactions();
             if (pollTimer) {
                 clearInterval(pollTimer);
                 pollTimer = null;
@@ -1609,6 +1671,10 @@ createApp({
             roomSubscription.value = stompClient.value.subscribe(`/topic/rooms/${roomId.value}`, (message) => {
                 const payload = JSON.parse(message.body || "{}");
                 console.debug(`[UNO-SYNC] ws message type=${payload.type || payload.event || "ROOM_STATE"} roomId=${payload.roomId ?? roomId.value} currentTurn=${payload?.gameState?.currentTurn ?? payload?.roomState?.currentTurn ?? "none"} version=${extractStateVersion(payload) ?? "none"}`);
+                if (payload.type === "PLAYER_REACTION") {
+                    showPlayerReaction(payload);
+                    return;
+                }
                 if (payload.type === "ROOM_DELETED") {
                     handleRoomDeleted(payload);
                     return;
@@ -2082,6 +2148,10 @@ createApp({
             drawingCard,
             drawingPenalty,
             playingCard,
+            reactionPickerOpen,
+            sendingReaction,
+            activeReactions,
+            reactionOptions,
             canDraw,
             canPlaySelected,
             showPenaltyNotice,
@@ -2109,6 +2179,7 @@ createApp({
             playSelectedCard,
             drawCardAction,
             drawPenaltyAction,
+            sendReaction,
             restartGameAction,
             continueCurrentGame,
             leaveAfterPlayerExit,

@@ -106,6 +106,26 @@ class GameWebSocketServiceTest {
     }
 
     @Test
+    void playerReactionBroadcastUsesRoomTopicAndIdentifiesSender() {
+        RecordingTemplate template = new RecordingTemplate();
+        GameWebSocketService service = new GameWebSocketService(template);
+
+        Map<String, Object> result = service.broadcastPlayerReaction(12L, 99L, "alice", "🎉");
+
+        assertEquals("/topic/rooms/12", template.destination);
+        Map<?, ?> payload = (Map<?, ?>) template.payload;
+        assertEquals("PLAYER_REACTION", payload.get("type"));
+        assertEquals(12L, payload.get("roomId"));
+        assertEquals(99L, payload.get("userId"));
+        assertEquals("alice", payload.get("username"));
+        assertEquals("🎉", payload.get("emoji"));
+        assertEquals(2600, payload.get("durationMs"));
+        assertTrue(payload.get("reactionId") instanceof String);
+        assertTrue(payload.get("timestamp") instanceof Long);
+        assertEquals(result, payload);
+    }
+
+    @Test
     void roomBroadcastStaysSeparateFromGameStateFields() {
         RecordingTemplate template = new RecordingTemplate();
         GameWebSocketService service = new GameWebSocketService(template);

@@ -81,6 +81,39 @@
             </div>
         </header>
 
+        <div class="reaction-control">
+            <button
+                type="button"
+                class="reaction-launcher"
+                :class="{ active: reactionPickerOpen }"
+                :disabled="sendingReaction || !roomId"
+                :aria-expanded="reactionPickerOpen"
+                aria-controls="reactionPicker"
+                :aria-label="t('reactions')"
+                @click="reactionPickerOpen = !reactionPickerOpen"
+            >
+                <span aria-hidden="true">😊</span>
+            </button>
+            <div
+                v-if="reactionPickerOpen"
+                id="reactionPicker"
+                class="reaction-picker"
+                role="group"
+                :aria-label="t('sendReaction')"
+            >
+                <button
+                    v-for="emoji in reactionOptions"
+                    :key="emoji"
+                    type="button"
+                    class="reaction-option"
+                    :aria-label="`${t('sendReaction')} ${emoji}`"
+                    @click="sendReaction(emoji)"
+                >
+                    {{ emoji }}
+                </button>
+            </div>
+        </div>
+
         <main class="table-stage">
             <section class="players-area" :aria-label="t('players')">
                 <div
@@ -98,6 +131,15 @@
                         <div class="player-meta">{{ player.handCount }} {{ t("cardsUnit") }}</div>
                     </div>
                     <div class="uno-badge" v-if="player.saidUno">UNO!</div>
+                    <div
+                        v-if="activeReactions[String(player.userId)]"
+                        :key="activeReactions[String(player.userId)].id"
+                        class="player-reaction"
+                        role="status"
+                        aria-live="polite"
+                    >
+                        {{ activeReactions[String(player.userId)].emoji }}
+                    </div>
                 </div>
             </section>
 

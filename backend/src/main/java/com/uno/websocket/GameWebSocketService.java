@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 
 @Service
 public class GameWebSocketService {
@@ -97,6 +98,26 @@ public class GameWebSocketService {
                 patch.gameId(),
                 patch.currentPlayerId(),
                 patch.version());
+    }
+
+    public Map<String, Object> broadcastPlayerReaction(Long roomId,
+                                                        Long userId,
+                                                        String username,
+                                                        String emoji) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("type", "PLAYER_REACTION");
+        payload.put("event", "PLAYER_REACTION");
+        payload.put("reactionId", UUID.randomUUID().toString());
+        payload.put("roomId", roomId);
+        payload.put("userId", userId);
+        payload.put("username", username);
+        payload.put("emoji", emoji);
+        payload.put("durationMs", 2600);
+        payload.put("timestamp", System.currentTimeMillis());
+
+        timedSend("/topic/rooms/" + roomId, payload, roomId, "PLAYER_REACTION");
+        log.info("[UNO] reaction broadcast roomId={} userId={} emoji={}", roomId, userId, emoji);
+        return payload;
     }
 
     public void sendPrivateHandPatch(String username,

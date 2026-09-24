@@ -1,5 +1,6 @@
 package com.uno.controller;
 
+import com.uno.dto.request.ReactionRequest;
 import com.uno.dto.response.ApiResponse;
 import com.uno.entity.enums.CardColor;
 import com.uno.service.GameService;
@@ -7,6 +8,7 @@ import jakarta.servlet.http.HttpSession;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -133,6 +135,25 @@ public class GameController {
             return ApiResponse.error(400, e.getMessage());
         } catch (RuntimeException e) {
             return ApiResponse.error(500, e.getMessage());
+        }
+    }
+
+    @PostMapping("/{roomId}/reaction")
+    public ApiResponse<Map<String, Object>> sendReaction(@PathVariable Long roomId,
+                                                         @RequestBody(required = false) ReactionRequest request,
+                                                         HttpSession session) {
+        Long userId = getCurrentUserId(session);
+        if (userId == null) {
+            return unauthorized();
+        }
+        if (request == null) {
+            return ApiResponse.error(400, "Reaction is required");
+        }
+
+        try {
+            return ApiResponse.success("Reaction sent", gameService.sendReaction(roomId, userId, request.emoji()));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.error(400, e.getMessage());
         }
     }
 
