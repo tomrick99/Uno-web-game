@@ -19,6 +19,9 @@ createApp({
         const remainingTimeMs = ref(0);
         const turnEndsAtEpochMs = ref(null);
         const turnRemainingTimeMs = ref(0);
+        const unoWindows = ref([]);
+        const unoActionPending = ref({});
+        const unoNowEpochMs = ref(Date.now());
         const finishReason = ref(null);
         const gameMode = ref("CLASSIC");
         const drawPileRule = ref("AUTO_REFILL");
@@ -176,6 +179,10 @@ createApp({
                 reactions: "发送表情",
                 sendReaction: "发送",
                 reactionFailed: "表情发送失败",
+                unoCall: "喊 UNO",
+                unoChallenge: "抓 UNO +2",
+                unoWindowPrompt: "{name} 只剩 1 张牌",
+                unoActionFailed: "UNO 操作失败",
                 timeLimitReached: "倒计时结束",
                 playerLeftTitle: "有玩家退出",
                 playerLeftContinue: "{name} 已退出游戏。是否由剩余玩家继续当前游戏？",
@@ -272,6 +279,10 @@ createApp({
                 reactions: "Send a reaction",
                 sendReaction: "Send",
                 reactionFailed: "Failed to send reaction",
+                unoCall: "Call UNO",
+                unoChallenge: "Challenge +2",
+                unoWindowPrompt: "{name} has 1 card left",
+                unoActionFailed: "UNO action failed",
                 timeLimitReached: "Time limit reached",
                 playerLeftTitle: "Player Left",
                 playerLeftContinue: "{name} left the game. Continue with the remaining players?",
@@ -404,8 +415,21 @@ createApp({
         const turnCountdownUrgent = computed(() => gameStatus.value === "PLAYING"
             && turnRemainingTimeMs.value > 0
             && turnRemainingTimeMs.value <= 10_000);
+        const activeUnoWindows = computed(() => {
+            if (gameStatus.value !== "PLAYING") return [];
+            const activePlayerIds = new Set(tablePlayers.value.map((player) => String(player.userId)));
+            return unoWindows.value.filter((window) =>
+                Number(window.endsAtEpochMs) > unoNowEpochMs.value
+                && activePlayerIds.has(String(window.targetPlayerId))
+            );
+        });
+        const unoWindowSeconds = (window) => Math.max(0, Math.ceil(
+            (Number(window?.endsAtEpochMs || 0) - unoNowEpochMs.value) / 1000
+        ));
+        const isUnoActionPending = (eventId) => Boolean(unoActionPending.value[String(eventId)]);
 
         const updateCountdown = () => {
+            unoNowEpochMs.value = Date.now() + serverClockOffsetMs;
             if (!gameTimerEnabled.value || !timerEndsAtEpochMs.value || gameStatus.value !== "PLAYING") {
                 remainingTimeMs.value = 0;
             } else {
@@ -415,10 +439,10 @@ createApp({
 
             if (!turnEndsAtEpochMs.value || gameStatus.value !== "PLAYING") {
                 turnRemainingTimeMs.value = 0;
-                return;
+            } else {
+                turnRemainingTimeMs.value = Math.max(0,
+                    Number(turnEndsAtEpochMs.value) - unoNowEpochMs.value);
             }
-            turnRemainingTimeMs.value = Math.max(0,
-                Number(turnEndsAtEpochMs.value) - (Date.now() + serverClockOffsetMs));
         };
 
         const getCardDisplay = (type, value) => {
@@ -945,6 +969,8 @@ createApp({
             currentTurn.value = null;
             turnEndsAtEpochMs.value = null;
             turnRemainingTimeMs.value = 0;
+            unoWindows.value = [];
+            unoActionPending.value = {};
             pendingDrawCount.value = 0;
             pendingDrawType.value = "NONE";
             autoPenaltyInProgress.value = false;
@@ -964,6 +990,8 @@ createApp({
             remainingTimeMs.value = 0;
             turnEndsAtEpochMs.value = null;
             turnRemainingTimeMs.value = 0;
+            unoWindows.value = [];
+            unoActionPending.value = {};
             finishReason.value = null;
             gameMode.value = "CLASSIC";
             drawPileRule.value = "AUTO_REFILL";
@@ -1164,6 +1192,7 @@ createApp({
                 copyField("gameTimerEnabled");
                 copyField("timerEndsAtEpochMs");
                 copyField("turnEndsAtEpochMs");
+                copyField("unoWindows");
                 copyField("finishReason");
                 if (hasOwnField(payload, "timestamp")) gameState.serverTime = payload.timestamp;
                 copyField("rematchReadyPlayerIds");
@@ -1348,6 +1377,16 @@ createApp({
             if (hasOwnField(gameState, "gameTimerEnabled")) gameTimerEnabled.value = Boolean(gameState.gameTimerEnabled);
             if (hasOwnField(gameState, "timerEndsAtEpochMs")) timerEndsAtEpochMs.value = gameState.timerEndsAtEpochMs;
             if (hasOwnField(gameState, "turnEndsAtEpochMs")) turnEndsAtEpochMs.value = gameState.turnEndsAtEpochMs;
+            if (hasOwnField(gameState, "unoWindows")) {
+                unoWindows.value = Array.isArray(gameState.unoWindows)
+                    ? gameState.unoWindows.map((window) => ({
+                        eventId: window.eventId,
+                        targetPlayerId: window.targetPlayerId,
+                        targetPlayerName: window.targetPlayerName,
+                        endsAtEpochMs: Number(window.endsAtEpochMs)
+                    }))
+                    : [];
+            }
             if (hasOwnField(gameState, "finishReason")) finishReason.value = gameState.finishReason;
             if (hasOwnField(gameState, "serverTime") && Number.isFinite(Number(gameState.serverTime))) {
                 serverClockOffsetMs = Number(gameState.serverTime) - Date.now();
@@ -1929,6 +1968,47 @@ createApp({
             chosenColor.value = color;
         };
 
+        const isMyUnoWindow = (window) => String(window?.targetPlayerId) === String(userId.value);
+
+        const submitUnoAction = async (window, action) => {
+            const eventId = window?.eventId;
+            if (!eventId
+                    || !gameId.value
+                    || gameStatus.value !== "PLAYING"
+                    || unoWindowSeconds(window) <= 0
+                    || isUnoActionPending(eventId)) {
+                return;
+            }
+            if ((action === "call") !== isMyUnoWindow(window)) return;
+
+            const pendingKey = String(eventId);
+            unoActionPending.value = { ...unoActionPending.value, [pendingKey]: true };
+            try {
+                const endpoint = action === "call" ? "uno-call" : "uno-challenge";
+                const params = new URLSearchParams({ eventId: String(eventId) });
+                const response = await axios.post(`${apiBase}/game/${gameId.value}/${endpoint}?${params.toString()}`);
+                if (response.data.code === 200) {
+                    unoWindows.value = unoWindows.value.filter((item) => String(item.eventId) !== pendingKey);
+                    if (shouldRefreshAfterAck(response)) {
+                        await refreshFromServer({ reason: `uno-${action}-ack` });
+                    }
+                } else {
+                    showToastMessage(response.data.message || t("unoActionFailed"));
+                    await refreshFromServer({ reason: `uno-${action}-rejected` });
+                }
+            } catch (error) {
+                showToastMessage(error.response?.data?.message || t("unoActionFailed"));
+                await refreshFromServer({ reason: `uno-${action}-failed` });
+            } finally {
+                const nextPending = { ...unoActionPending.value };
+                delete nextPending[pendingKey];
+                unoActionPending.value = nextPending;
+            }
+        };
+
+        const callUno = (window) => submitUnoAction(window, "call");
+        const challengeUno = (window) => submitUnoAction(window, "challenge");
+
         const sendReaction = async (emoji) => {
             if (reactionSending.value
                     || gameStatus.value !== "PLAYING"
@@ -2142,6 +2222,7 @@ createApp({
             remainingTimeMs,
             turnEndsAtEpochMs,
             turnRemainingTimeMs,
+            activeUnoWindows,
             gameStatus,
             gameMode,
             drawPileRule,
@@ -2202,6 +2283,9 @@ createApp({
             countdownUrgent,
             turnCountdownText,
             turnCountdownUrgent,
+            unoWindowSeconds,
+            isUnoActionPending,
+            isMyUnoWindow,
             languageLabel,
             selectedCardInfo,
             modeRuleLines,
@@ -2212,6 +2296,8 @@ createApp({
             showToastMessage,
             selectCard,
             pickColor,
+            callUno,
+            challengeUno,
             sendReaction,
             playSelectedCard,
             drawCardAction,

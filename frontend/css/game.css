@@ -1018,6 +1018,90 @@
     text-align: center;
 }
 
+.uno-window-tray {
+    position: fixed;
+    right: 18px;
+    bottom: 210px;
+    z-index: 44;
+    display: flex;
+    width: min(430px, calc(100vw - 36px));
+    max-height: 150px;
+    flex-direction: column;
+    gap: 7px;
+    overflow-y: auto;
+    pointer-events: none;
+}
+
+.uno-window-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 9px 10px;
+    border: 1px solid rgba(243, 156, 18, 0.72);
+    border-radius: 14px;
+    background: rgba(18, 18, 36, 0.96);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.42), 0 0 18px rgba(243, 156, 18, 0.18);
+    backdrop-filter: blur(14px);
+    pointer-events: auto;
+}
+
+.uno-window-copy {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 7px;
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.uno-window-copy strong {
+    color: #ffd166;
+    font-size: 16px;
+    letter-spacing: 0.04em;
+}
+
+.uno-window-copy span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.uno-window-copy time {
+    flex: 0 0 auto;
+    min-width: 24px;
+    color: #ffdca0;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+.uno-call-button,
+.uno-challenge-button {
+    flex: 0 0 auto;
+    min-height: 38px;
+    padding: 7px 12px;
+    border: 0;
+    border-radius: 10px;
+    color: #fff;
+    font-weight: 800;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.uno-call-button {
+    background: linear-gradient(135deg, #2ecc71, #1f9f55);
+}
+
+.uno-challenge-button {
+    background: linear-gradient(135deg, #e67e22, #c0392b);
+}
+
+.uno-call-button:disabled,
+.uno-challenge-button:disabled {
+    opacity: 0.55;
+    cursor: wait;
+}
+
 .game-help-panel {
     position: fixed;
     right: -300px;
@@ -1569,6 +1653,10 @@
         backdrop-filter: blur(16px);
     }
 
+    .uno-window-tray {
+        bottom: calc(var(--desktop-dock-height) + 10px);
+    }
+
     .hand-cards {
         box-sizing: border-box;
         min-height: 0;
@@ -1867,6 +1955,27 @@
         border-top-color: rgba(255, 255, 255, 0.18);
         box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.36);
         backdrop-filter: blur(16px);
+    }
+
+    .uno-window-tray {
+        right: 8px;
+        bottom: calc(var(--responsive-dock-height) + 7px);
+        left: 8px;
+        width: auto;
+        max-height: 104px;
+        align-items: flex-end;
+    }
+
+    .uno-window-card {
+        width: min(430px, 100%);
+        box-sizing: border-box;
+        padding: 7px 8px;
+    }
+
+    .uno-call-button,
+    .uno-challenge-button {
+        min-height: 36px;
+        padding: 6px 10px;
     }
 
     .hand-cards {
@@ -2316,6 +2425,26 @@
         border-top: 0;
         border-left: 1px solid rgba(255, 255, 255, 0.18);
         box-shadow: -10px 0 28px rgba(0, 0, 0, 0.32);
+    }
+
+    .uno-window-tray {
+        right: calc(42vw + 8px);
+        bottom: 8px;
+        left: 8px;
+        max-height: 96px;
+        align-items: flex-start;
+    }
+
+    .uno-window-card {
+        width: min(100%, 390px);
+    }
+
+    .uno-window-copy {
+        font-size: 11px;
+    }
+
+    .uno-window-copy strong {
+        font-size: 14px;
     }
 
     .hand-cards {

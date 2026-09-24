@@ -192,6 +192,35 @@
             </section>
         </main>
 
+        <section
+            v-if="activeUnoWindows.length"
+            class="uno-window-tray"
+            aria-live="polite"
+            :aria-label="t('unoCall')"
+        >
+            <article v-for="window in activeUnoWindows" :key="window.eventId" class="uno-window-card">
+                <div class="uno-window-copy">
+                    <strong>UNO!</strong>
+                    <span>{{ t("unoWindowPrompt", { name: window.targetPlayerName }) }}</span>
+                    <time :datetime="String(window.endsAtEpochMs)">{{ unoWindowSeconds(window) }}s</time>
+                </div>
+                <button
+                    v-if="isMyUnoWindow(window)"
+                    type="button"
+                    class="uno-call-button"
+                    :disabled="isUnoActionPending(window.eventId)"
+                    @click="callUno(window)"
+                >{{ t("unoCall") }}</button>
+                <button
+                    v-else
+                    type="button"
+                    class="uno-challenge-button"
+                    :disabled="isUnoActionPending(window.eventId)"
+                    @click="challengeUno(window)"
+                >{{ t("unoChallenge") }}</button>
+            </article>
+        </section>
+
         <aside class="game-help-panel" :class="{ expanded: rulesExpanded }">
             <div class="rules-toggle" @click="rulesExpanded = !rulesExpanded">{{ t("rules") }}</div>
             <div class="rules-content" v-if="rulesExpanded">

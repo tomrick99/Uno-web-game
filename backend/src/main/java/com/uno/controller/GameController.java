@@ -157,6 +157,42 @@ public class GameController {
         }
     }
 
+    @PostMapping("/{gameId}/uno-call")
+    public ApiResponse<Map<String, Object>> callUno(@PathVariable Long gameId,
+                                                     @RequestParam Long eventId,
+                                                     HttpSession session) {
+        Long userId = getCurrentUserId(session);
+        if (userId == null) {
+            return unauthorized();
+        }
+
+        try {
+            return ApiResponse.success("UNO called", gameService.callUno(gameId, userId, eventId));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.error(400, e.getMessage());
+        } catch (RuntimeException e) {
+            return ApiResponse.error(500, e.getMessage());
+        }
+    }
+
+    @PostMapping("/{gameId}/uno-challenge")
+    public ApiResponse<Map<String, Object>> challengeUno(@PathVariable Long gameId,
+                                                          @RequestParam Long eventId,
+                                                          HttpSession session) {
+        Long userId = getCurrentUserId(session);
+        if (userId == null) {
+            return unauthorized();
+        }
+
+        try {
+            return ApiResponse.success("UNO challenged", gameService.challengeUno(gameId, userId, eventId));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.error(400, e.getMessage());
+        } catch (RuntimeException e) {
+            return ApiResponse.error(500, e.getMessage());
+        }
+    }
+
     @GetMapping("/room/{roomId}/state")
     public ApiResponse<Map<String, Object>> getGameStateByRoom(@PathVariable Long roomId) {
         try {
