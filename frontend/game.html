@@ -35,6 +35,31 @@
                     <span>{{ currentColorLabel }}</span>
                 </span>
             </div>
+            <div class="reaction-control" :class="{ open: reactionPickerOpen }">
+                <button
+                    type="button"
+                    class="reaction-toggle"
+                    :class="{ active: reactionPickerOpen }"
+                    :disabled="gameStatus !== 'PLAYING' || reactionSending"
+                    :aria-expanded="reactionPickerOpen"
+                    aria-controls="reactionPicker"
+                    :aria-label="t('reactions')"
+                    @click="reactionPickerOpen = !reactionPickerOpen"
+                >
+                    <span aria-hidden="true">😊</span>
+                </button>
+                <div v-if="reactionPickerOpen" id="reactionPicker" class="reaction-picker" role="group" :aria-label="t('reactions')">
+                    <button
+                        v-for="emoji in reactionOptions"
+                        :key="emoji"
+                        type="button"
+                        class="reaction-option"
+                        :disabled="reactionSending"
+                        :aria-label="`${t('sendReaction')} ${emoji}`"
+                        @click="sendReaction(emoji)"
+                    >{{ emoji }}</button>
+                </div>
+            </div>
             <button
                 type="button"
                 class="status-menu-toggle"
@@ -98,6 +123,15 @@
                         <div class="player-meta">{{ player.handCount }} {{ t("cardsUnit") }}</div>
                     </div>
                     <div class="uno-badge" v-if="player.saidUno">UNO!</div>
+                    <transition name="reaction-pop">
+                        <div
+                            v-if="playerReactions[String(player.userId)]"
+                            :key="playerReactions[String(player.userId)].token"
+                            class="player-reaction"
+                            role="status"
+                            :aria-label="`${player.username}: ${playerReactions[String(player.userId)].emoji}`"
+                        >{{ playerReactions[String(player.userId)].emoji }}</div>
+                    </transition>
                 </div>
             </section>
 

@@ -99,6 +99,25 @@ public class GameWebSocketService {
                 patch.version());
     }
 
+    public Map<String, Object> broadcastPlayerReaction(Long roomId,
+                                                       Long gameId,
+                                                       Long userId,
+                                                       String username,
+                                                       String emoji) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("type", "PLAYER_REACTION");
+        payload.put("event", "PLAYER_REACTION");
+        payload.put("roomId", roomId);
+        payload.put("gameId", gameId);
+        payload.put("actorUserId", userId);
+        payload.put("actorName", username);
+        payload.put("emoji", emoji);
+        payload.put("timestamp", System.currentTimeMillis());
+
+        timedSend("/topic/games/" + gameId, payload, roomId, "PLAYER_REACTION");
+        return payload;
+    }
+
     public void sendPrivateHandPatch(String username,
                                      Long roomId,
                                      Long gameId,

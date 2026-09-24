@@ -37,6 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
@@ -47,6 +48,7 @@ import java.util.function.Supplier;
 public class GameService {
 
     private static final Logger log = LoggerFactory.getLogger(GameService.class);
+    private static final Set<String> ALLOWED_REACTIONS = Set.of("😂", "😭", "😡", "👍", "🎉", "😱");
 
     private record PlayValidation(boolean playable, String reason) {}
 
@@ -176,6 +178,27 @@ public class GameService {
     public Map<String, Object> readyForRematch(Long gameId, Long userId) {
         Long roomId = getRoomIdByGameId(gameId);
         return withRoomLock(roomId, () -> doReadyForRematch(gameId, userId));
+    }
+
+    public Map<String, Object> sendReaction(Long gameId, Long userId, String emoji) {
+        if (!ALLOWED_REACTIONS.contains(emoji)) {
+            throw new IllegalArgumentException("Unsupported reaction");
+        }
+
+        Game game = gameRepository.findById(gameId)
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
+        if (game.getStatus() != GameStatus.PLAYING) {
+            throw new IllegalArgumentException("Reactions are only available while the game is playing");
+        }
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found"));
+        gamePlayerRepository.findByGameAndUser(game, user)
+                .orElseThrow(() -> new IllegalArgumentException("Only players in this game can react"));
+
+        Long roomId = game.getRoom().getId();
+        log.info("[UNO] player reaction roomId={} gameId={} userId={} emoji={}", roomId, gameId, userId, emoji);
+        return wsService.broadcastPlayerReaction(roomId, gameId, userId, user.getUsername(), emoji);
     }
 
     public Map<String, Object> leaveRoom(Long roomId, Long userId) {

@@ -45,6 +45,9 @@ createApp({
         const logExpanded = ref(false);
         const rulesExpanded = ref(false);
         const statusExpanded = ref(false);
+        const reactionPickerOpen = ref(false);
+        const reactionSending = ref(false);
+        const playerReactions = ref({});
         const gameResult = ref(null);
         const continuationPrompt = ref(null);
         const toastMsg = ref("");
@@ -88,6 +91,8 @@ createApp({
         let lastGameStartConsistencyKey = null;
         let countdownTimer = null;
         let serverClockOffsetMs = 0;
+        const reactionTimers = new Map();
+        const reactionOptions = ["😂", "😭", "😡", "👍", "🎉", "😱"];
 
         const colorMap = {
             RED: "#E74C3C",
@@ -165,6 +170,9 @@ createApp({
                 timeRemaining: "剩余时间",
                 showStatus: "展开状态信息",
                 hideStatus: "收起状态信息",
+                reactions: "发送表情",
+                sendReaction: "发送",
+                reactionFailed: "表情发送失败",
                 timeLimitReached: "倒计时结束",
                 playerLeftTitle: "有玩家退出",
                 playerLeftContinue: "{name} 已退出游戏。是否由剩余玩家继续当前游戏？",
@@ -257,6 +265,9 @@ createApp({
                 timeRemaining: "Time left",
                 showStatus: "Show game status",
                 hideStatus: "Hide game status",
+                reactions: "Send a reaction",
+                sendReaction: "Send",
+                reactionFailed: "Failed to send reaction",
                 timeLimitReached: "Time limit reached",
                 playerLeftTitle: "Player Left",
                 playerLeftContinue: "{name} left the game. Continue with the remaining players?",
@@ -737,6 +748,38 @@ createApp({
             }
         };
 
+        const clearReactionTimers = () => {
+            for (const timer of reactionTimers.values()) clearTimeout(timer);
+            reactionTimers.clear();
+            playerReactions.value = {};
+            reactionPickerOpen.value = false;
+        };
+
+        const displayPlayerReaction = (payload) => {
+            const actorKey = payload?.actorUserId == null ? "" : String(payload.actorUserId);
+            const emoji = payload?.emoji;
+            if (!actorKey
+                    || !reactionOptions.includes(emoji)
+                    || !tablePlayers.value.some((player) => String(player.userId) === actorKey)) {
+                return;
+            }
+
+            const previousTimer = reactionTimers.get(actorKey);
+            if (previousTimer) clearTimeout(previousTimer);
+            const token = `${payload.timestamp || Date.now()}-${emoji}`;
+            playerReactions.value = {
+                ...playerReactions.value,
+                [actorKey]: { emoji, token }
+            };
+            reactionTimers.set(actorKey, setTimeout(() => {
+                if (playerReactions.value[actorKey]?.token !== token) return;
+                const nextReactions = { ...playerReactions.value };
+                delete nextReactions[actorKey];
+                playerReactions.value = nextReactions;
+                reactionTimers.delete(actorKey);
+            }, 2600));
+        };
+
         const refreshHandPlayability = () => {
             handCards.value = sortHandCards(handCards.value).map(decorateCard);
             if (selectedCard.value === null) return;
@@ -879,6 +922,7 @@ createApp({
 
         const handleGameFinished = (gameState) => {
             clearCardSelection();
+            reactionPickerOpen.value = false;
             gameStatus.value = "FINISHED";
             currentTurn.value = null;
             pendingDrawCount.value = 0;
@@ -932,6 +976,7 @@ createApp({
             autoPenaltyInProgress.value = false;
             lastAutoPenaltyKey.value = "";
             clearAutoPenaltyTimer();
+            clearReactionTimers();
         };
 
         const storeLobbyNotice = (message) => {
@@ -1642,6 +1687,10 @@ createApp({
                     handleRoomDeleted(payload);
                     return;
                 }
+                if (payload.type === "PLAYER_REACTION") {
+                    displayPlayerReaction(payload);
+                    return;
+                }
                 offerContinuationAfterPlayerLeft(payload);
                 queueRealtimeBatch(payload);
             });
@@ -1856,6 +1905,30 @@ createApp({
             chosenColor.value = color;
         };
 
+        const sendReaction = async (emoji) => {
+            if (reactionSending.value
+                    || gameStatus.value !== "PLAYING"
+                    || !gameId.value
+                    || !reactionOptions.includes(emoji)) {
+                return;
+            }
+
+            reactionSending.value = true;
+            reactionPickerOpen.value = false;
+            try {
+                const response = await axios.post(`${apiBase}/game/${gameId.value}/reaction`, { emoji });
+                if (response.data.code !== 200) {
+                    showToastMessage(response.data.message || t("reactionFailed"));
+                    return;
+                }
+                if (!wsConnected.value) displayPlayerReaction(response.data.data);
+            } catch (error) {
+                showToastMessage(error.response?.data?.message || t("reactionFailed"));
+            } finally {
+                reactionSending.value = false;
+            }
+        };
+
         const playSelectedCard = async () => {
             if (selectedCard.value === null || playingCard.value) return;
             const card = handCards.value[selectedCard.value];
@@ -2030,6 +2103,7 @@ createApp({
                 clearInterval(countdownTimer);
                 countdownTimer = null;
             }
+            clearReactionTimers();
             if (beforeUnloadHandler) window.removeEventListener("beforeunload", beforeUnloadHandler);
             if (delegatedButtonHandler) document.removeEventListener("click", delegatedButtonHandler);
         });
@@ -2069,6 +2143,10 @@ createApp({
             logExpanded,
             rulesExpanded,
             statusExpanded,
+            reactionPickerOpen,
+            reactionSending,
+            reactionOptions,
+            playerReactions,
             gameResult,
             continuationPrompt,
             toastMsg,
@@ -2106,6 +2184,7 @@ createApp({
             showToastMessage,
             selectCard,
             pickColor,
+            sendReaction,
             playSelectedCard,
             drawCardAction,
             drawPenaltyAction,

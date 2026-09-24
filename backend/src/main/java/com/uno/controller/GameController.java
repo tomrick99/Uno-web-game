@@ -1,5 +1,6 @@
 package com.uno.controller;
 
+import com.uno.dto.request.PlayerReactionRequest;
 import com.uno.dto.response.ApiResponse;
 import com.uno.entity.enums.CardColor;
 import com.uno.service.GameService;
@@ -9,6 +10,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -129,6 +131,25 @@ public class GameController {
 
         try {
             return ApiResponse.success("Game restarted", gameService.restartGame(gameId, userId));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.error(400, e.getMessage());
+        } catch (RuntimeException e) {
+            return ApiResponse.error(500, e.getMessage());
+        }
+    }
+
+    @PostMapping("/{gameId}/reaction")
+    public ApiResponse<Map<String, Object>> sendReaction(@PathVariable Long gameId,
+                                                         @RequestBody PlayerReactionRequest request,
+                                                         HttpSession session) {
+        Long userId = getCurrentUserId(session);
+        if (userId == null) {
+            return unauthorized();
+        }
+
+        try {
+            String emoji = request != null ? request.getEmoji() : null;
+            return ApiResponse.success("Reaction sent", gameService.sendReaction(gameId, userId, emoji));
         } catch (IllegalArgumentException e) {
             return ApiResponse.error(400, e.getMessage());
         } catch (RuntimeException e) {
