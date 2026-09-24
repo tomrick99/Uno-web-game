@@ -63,6 +63,9 @@ public class Game {
     @Column(name = "timer_ends_at_epoch_ms")
     private Long timerEndsAtEpochMs;
 
+    @Column(name = "turn_ends_at_epoch_ms")
+    private Long turnEndsAtEpochMs;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "finish_reason", length = 50)
     private GameFinishReason finishReason;
@@ -121,6 +124,9 @@ public class Game {
 
     public Long getTimerEndsAtEpochMs() { return timerEndsAtEpochMs; }
     public void setTimerEndsAtEpochMs(Long timerEndsAtEpochMs) { this.timerEndsAtEpochMs = timerEndsAtEpochMs; }
+
+    public Long getTurnEndsAtEpochMs() { return turnEndsAtEpochMs; }
+    public void setTurnEndsAtEpochMs(Long turnEndsAtEpochMs) { this.turnEndsAtEpochMs = turnEndsAtEpochMs; }
 
     public GameFinishReason getFinishReason() { return finishReason; }
     public void setFinishReason(GameFinishReason finishReason) { this.finishReason = finishReason; }

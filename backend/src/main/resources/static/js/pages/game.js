@@ -17,6 +17,8 @@ createApp({
         const gameTimerEnabled = ref(false);
         const timerEndsAtEpochMs = ref(null);
         const remainingTimeMs = ref(0);
+        const turnEndsAtEpochMs = ref(null);
+        const turnRemainingTimeMs = ref(0);
         const finishReason = ref(null);
         const gameMode = ref("CLASSIC");
         const drawPileRule = ref("AUTO_REFILL");
@@ -168,6 +170,7 @@ createApp({
                 tieSubtitle: "本局出现并列第一，可以返回大厅或申请再来一局。",
                 finalRanking: "最终排名",
                 timeRemaining: "剩余时间",
+                turnTimeRemaining: "本回合",
                 showStatus: "展开状态信息",
                 hideStatus: "收起状态信息",
                 reactions: "发送表情",
@@ -176,6 +179,7 @@ createApp({
                 timeLimitReached: "倒计时结束",
                 playerLeftTitle: "有玩家退出",
                 playerLeftContinue: "{name} 已退出游戏。是否由剩余玩家继续当前游戏？",
+                playerAfkContinue: "{name} 因连续 3 回合超时已被移出本局。是否由剩余玩家继续当前游戏？",
                 continueGame: "继续游戏",
                 leaveGame: "退出游戏",
                 cardNumber: "数字牌：颜色相同或数字相同即可出。",
@@ -263,6 +267,7 @@ createApp({
                 tieSubtitle: "This game ended with a tie for first. You can return to the lobby or rematch.",
                 finalRanking: "Final ranking",
                 timeRemaining: "Time left",
+                turnTimeRemaining: "Turn time",
                 showStatus: "Show game status",
                 hideStatus: "Hide game status",
                 reactions: "Send a reaction",
@@ -271,6 +276,7 @@ createApp({
                 timeLimitReached: "Time limit reached",
                 playerLeftTitle: "Player Left",
                 playerLeftContinue: "{name} left the game. Continue with the remaining players?",
+                playerAfkContinue: "{name} was removed after timing out for 3 consecutive turns. Continue with the remaining players?",
                 continueGame: "Continue Game",
                 leaveGame: "Leave Game",
                 cardNumber: "Number: play on matching color or matching number.",
@@ -393,14 +399,24 @@ createApp({
         const countdownUrgent = computed(() => gameStatus.value === "PLAYING"
             && remainingTimeMs.value > 0
             && remainingTimeMs.value <= 60_000);
+        const turnCountdownText = computed(() => {
+            const seconds = Math.max(0, Math.ceil(Number(turnRemainingTimeMs.value || 0) / 1000));
+            return language.value === "zh" ? `${seconds} 秒` : `${seconds}s`;
+        });
+        const turnCountdownUrgent = computed(() => gameStatus.value === "PLAYING"
+            && turnRemainingTimeMs.value > 0
+            && turnRemainingTimeMs.value <= 10_000);
 
         const updateCountdown = () => {
             if (!gameTimerEnabled.value || !timerEndsAtEpochMs.value || gameStatus.value !== "PLAYING") {
                 remainingTimeMs.value = 0;
-                return;
+            } else {
+                remainingTimeMs.value = Math.max(0,
+                    Number(timerEndsAtEpochMs.value) - (Date.now() + serverClockOffsetMs));
             }
-            remainingTimeMs.value = Math.max(0,
-                Number(timerEndsAtEpochMs.value) - (Date.now() + serverClockOffsetMs));
+            turnRemainingTimeMs.value = !turnEndsAtEpochMs.value || gameStatus.value !== "PLAYING"
+                ? 0
+                : Math.max(0, Number(turnEndsAtEpochMs.value) - (Date.now() + serverClockOffsetMs));
         };
 
         const getCardDisplay = (type, value) => {
@@ -942,6 +958,8 @@ createApp({
             gameTimerEnabled.value = false;
             timerEndsAtEpochMs.value = null;
             remainingTimeMs.value = 0;
+            turnEndsAtEpochMs.value = null;
+            turnRemainingTimeMs.value = 0;
             finishReason.value = null;
             gameMode.value = "CLASSIC";
             drawPileRule.value = "AUTO_REFILL";
@@ -1141,6 +1159,7 @@ createApp({
                 copyField("winnerId");
                 copyField("gameTimerEnabled");
                 copyField("timerEndsAtEpochMs");
+                copyField("turnEndsAtEpochMs");
                 copyField("finishReason");
                 if (hasOwnField(payload, "timestamp")) gameState.serverTime = payload.timestamp;
                 copyField("rematchReadyPlayerIds");
@@ -1324,6 +1343,7 @@ createApp({
             if (hasOwnField(gameState, "drawPileSize")) drawPileSize.value = Number(gameState.drawPileSize ?? 0);
             if (hasOwnField(gameState, "gameTimerEnabled")) gameTimerEnabled.value = Boolean(gameState.gameTimerEnabled);
             if (hasOwnField(gameState, "timerEndsAtEpochMs")) timerEndsAtEpochMs.value = gameState.timerEndsAtEpochMs;
+            if (hasOwnField(gameState, "turnEndsAtEpochMs")) turnEndsAtEpochMs.value = gameState.turnEndsAtEpochMs;
             if (hasOwnField(gameState, "finishReason")) finishReason.value = gameState.finishReason;
             if (hasOwnField(gameState, "serverTime") && Number.isFinite(Number(gameState.serverTime))) {
                 serverClockOffsetMs = Number(gameState.serverTime) - Date.now();
@@ -1507,7 +1527,7 @@ createApp({
         };
 
         const offerContinuationAfterPlayerLeft = (payload) => {
-            if (payload?.type !== "PLAYER_LEFT"
+            if (!["PLAYER_LEFT", "PLAYER_AFK_REMOVED"].includes(payload?.type)
                     || payload?.gameStatus !== "PLAYING"
                     || !Array.isArray(payload.players)
                     || payload.players.length < 2
@@ -1517,7 +1537,7 @@ createApp({
             }
             continuationPrompt.value = {
                 key: `${payload.version ?? "none"}:${payload.actorUserId ?? "unknown"}`,
-                message: t("playerLeftContinue", {
+                message: t(payload.type === "PLAYER_AFK_REMOVED" ? "playerAfkContinue" : "playerLeftContinue", {
                     name: payload.actorName || (language.value === "zh" ? "一名玩家" : "A player")
                 })
             };
@@ -2116,6 +2136,7 @@ createApp({
             roundTimeLimitMinutes,
             gameTimerEnabled,
             remainingTimeMs,
+            turnRemainingTimeMs,
             gameStatus,
             gameMode,
             drawPileRule,
@@ -2174,6 +2195,8 @@ createApp({
             connectionLabel,
             countdownText,
             countdownUrgent,
+            turnCountdownText,
+            turnCountdownUrgent,
             languageLabel,
             selectedCardInfo,
             modeRuleLines,

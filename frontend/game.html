@@ -29,6 +29,7 @@
                 <span class="turn-indicator" :class="{ 'my-turn': isMyTurn }">{{ turnLabel }}</span>
             </div>
             <div class="compact-status-summary" aria-live="polite">
+                <strong v-if="gameStatus === 'PLAYING'" class="compact-countdown turn-countdown" :class="{ urgent: turnCountdownUrgent }" :aria-label="t('turnTimeRemaining')">{{ turnCountdownText }}</strong>
                 <strong v-if="gameTimerEnabled && gameStatus === 'PLAYING'" class="compact-countdown" :class="{ urgent: countdownUrgent }">{{ countdownText }}</strong>
                 <span class="compact-color">
                     <span class="current-color" :style="{ background: colorMap[currentColor] || '#777' }"></span>
@@ -91,6 +92,10 @@
                 <div v-if="gameTimerEnabled && gameStatus === 'PLAYING'" class="status-chip countdown-chip" :class="{ urgent: countdownUrgent }" role="timer" aria-live="off">
                     <span class="status-label">{{ t("timeRemaining") }}</span>
                     <strong>{{ countdownText }}</strong>
+                </div>
+                <div v-if="gameStatus === 'PLAYING'" class="status-chip countdown-chip turn-countdown-chip" :class="{ urgent: turnCountdownUrgent }" role="timer" aria-live="off">
+                    <span class="status-label">{{ t("turnTimeRemaining") }}</span>
+                    <strong>{{ turnCountdownText }}</strong>
                 </div>
                 <div class="status-chip">
                     <span class="status-label">{{ t("players") }}</span>

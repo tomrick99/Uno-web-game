@@ -176,6 +176,16 @@
     box-shadow: 0 0 14px rgba(231, 76, 60, 0.24);
 }
 
+.turn-countdown-chip {
+    border-color: rgba(243, 156, 18, 0.62);
+    background: rgba(243, 156, 18, 0.13);
+}
+
+.turn-countdown-chip.urgent {
+    border-color: rgba(231, 76, 60, 0.88);
+    background: rgba(231, 76, 60, 0.2);
+}
+
 .connection .status-dot {
     width: 9px;
     height: 9px;
@@ -1687,6 +1697,14 @@
     .compact-countdown.urgent {
         background: rgba(231, 76, 60, 0.2);
         color: #ffd6d1;
+    }
+
+    .compact-countdown.turn-countdown {
+        background: rgba(243, 156, 18, 0.18);
+    }
+
+    .compact-countdown.turn-countdown.urgent {
+        background: rgba(231, 76, 60, 0.24);
     }
 
     .compact-color {

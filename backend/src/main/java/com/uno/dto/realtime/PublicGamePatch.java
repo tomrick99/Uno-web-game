@@ -26,6 +26,7 @@ public record PublicGamePatch(
         String roomStatus,
         Boolean gameTimerEnabled,
         Long timerEndsAtEpochMs,
+        Long turnEndsAtEpochMs,
         String finishReason,
         List<PublicPlayerInfo> players,
         Long winnerId,

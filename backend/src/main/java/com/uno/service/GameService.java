@@ -49,6 +49,8 @@ public class GameService {
 
     private static final Logger log = LoggerFactory.getLogger(GameService.class);
     private static final Set<String> ALLOWED_REACTIONS = Set.of("😂", "😭", "😡", "👍", "🎉", "😱");
+    static final long TURN_TIME_LIMIT_MS = 30_000L;
+    static final int AFK_TIMEOUT_LIMIT = 3;
 
     private record PlayValidation(boolean playable, String reason) {}
 
@@ -138,7 +140,7 @@ public class GameService {
         long startedAt = System.nanoTime();
         try {
             return withRoomLock(roomId, () -> {
-                Map<String, Object> timeoutAck = finishExpiredTimedGameBeforeAction(gameId, roomId);
+                Map<String, Object> timeoutAck = resolveExpiredTimersBeforeAction(gameId, roomId);
                 return timeoutAck != null ? timeoutAck : doPlayCard(gameId, userId, cardIndex, chosenColor);
             });
         } finally {
@@ -152,7 +154,7 @@ public class GameService {
         long startedAt = System.nanoTime();
         try {
             return withRoomLock(roomId, () -> {
-                Map<String, Object> timeoutAck = finishExpiredTimedGameBeforeAction(gameId, roomId);
+                Map<String, Object> timeoutAck = resolveExpiredTimersBeforeAction(gameId, roomId);
                 return timeoutAck != null ? timeoutAck : doDrawCard(gameId, userId);
             });
         } finally {
@@ -166,7 +168,7 @@ public class GameService {
         long startedAt = System.nanoTime();
         try {
             return withRoomLock(roomId, () -> {
-                Map<String, Object> timeoutAck = finishExpiredTimedGameBeforeAction(gameId, roomId);
+                Map<String, Object> timeoutAck = resolveExpiredTimersBeforeAction(gameId, roomId);
                 return timeoutAck != null ? timeoutAck : doDrawPenalty(gameId, userId);
             });
         } finally {
@@ -247,8 +249,11 @@ public class GameService {
     public void finishExpiredTimedGames() {
         long now = System.currentTimeMillis();
         List<Long> expiredGameIds = gameRepository.findByStatus(GameStatus.PLAYING).stream()
-                .filter(game -> game.getRoom() != null && game.getRoom().isGameTimerEnabled())
-                .filter(game -> game.getTimerEndsAtEpochMs() != null && game.getTimerEndsAtEpochMs() <= now)
+                .filter(game -> game.getRoom() != null)
+                .filter(game -> (game.getRoom().isGameTimerEnabled()
+                                && game.getTimerEndsAtEpochMs() != null
+                                && game.getTimerEndsAtEpochMs() <= now)
+                        || (game.getTurnEndsAtEpochMs() != null && game.getTurnEndsAtEpochMs() <= now))
                 .map(Game::getId)
                 .toList();
 
@@ -260,7 +265,10 @@ public class GameService {
             Long roomId = candidate.getRoom().getId();
             withRoomLock(roomId, () -> {
                 Game current = gameRepository.findById(gameId).orElse(null);
-                finishGameIfTimerExpired(current, System.currentTimeMillis());
+                long checkedAt = System.currentTimeMillis();
+                if (!finishGameIfTimerExpired(current, checkedAt)) {
+                    resolveTurnTimeout(current, checkedAt);
+                }
                 return null;
             });
         }
@@ -388,6 +396,7 @@ public class GameService {
         state.put("roundTimeLimitMinutes", game.getRoom().getRoundTimeLimitMinutes());
         state.put("gameTimerEnabled", game.getRoom().isGameTimerEnabled());
         state.put("timerEndsAtEpochMs", game.getTimerEndsAtEpochMs());
+        state.put("turnEndsAtEpochMs", game.getTurnEndsAtEpochMs());
         state.put("serverTime", System.currentTimeMillis());
         state.put("finishReason", game.getFinishReason() != null ? game.getFinishReason().name() : null);
         state.put("gameMode", resolveGameMode(game).name());
@@ -647,6 +656,7 @@ public class GameService {
         hand.remove(cardIndex);
         setSortedHand(player, hand);
         player.setSaidUno(hand.size() == 1);
+        resetConsecutiveTurnTimeouts(player);
         gamePlayerRepository.save(player);
 
         List<Card> discardPile = fromJson(game.getDiscardPileJson());
@@ -665,6 +675,7 @@ public class GameService {
         if (gameFinished) {
             game.setStatus(GameStatus.FINISHED);
             game.setCurrentTurn(null);
+            game.setTurnEndsAtEpochMs(null);
             game.setWinnerId(userId);
             game.setFinishReason(GameFinishReason.NORMAL);
             clearPendingDraw(game);
@@ -745,6 +756,8 @@ public class GameService {
             throw new IllegalArgumentException("Must resolve the pending draw stack by playing +2/+4 or drawing the penalty cards");
         }
 
+        resetConsecutiveTurnTimeouts(player);
+
         Deck deck = getDeck(game);
         Card drawn = deck.drawCard();
         if (drawn != null) {
@@ -813,6 +826,8 @@ public class GameService {
         User user = userRepository.getReferenceById(userId);
         GamePlayer player = gamePlayerRepository.findByGameAndUser(game, user)
                 .orElseThrow(() -> new IllegalArgumentException("Player is not in this game"));
+
+        resetConsecutiveTurnTimeouts(player);
 
         int drawCount = game.getPendingDrawCount();
         drawCardsToPlayer(game, player, drawCount);
@@ -924,6 +939,13 @@ public class GameService {
     }
 
     private Map<String, Object> doLeaveRoom(Long roomId, Long userId) {
+        return doLeaveRoom(roomId, userId, "PLAYER_LEFT", null);
+    }
+
+    private Map<String, Object> doLeaveRoom(Long roomId,
+                                            Long userId,
+                                            String eventType,
+                                            String eventMessage) {
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new IllegalArgumentException("Room not found"));
         User user = userRepository.findById(userId)
@@ -952,6 +974,9 @@ public class GameService {
         }
 
         log.info("[UNO] player left roomId={} playerId={}", roomId, userId);
+        String departureMessage = eventMessage != null && !eventMessage.isBlank()
+                ? eventMessage
+                : user.getUsername() + " left the room";
         GamePlayer leavingPlayer = playerOpt.get();
         gamePlayerRepository.delete(leavingPlayer);
         List<GamePlayer> remainingPlayers = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
@@ -961,7 +986,7 @@ public class GameService {
             log.info("[SYNC] action=lastPlayerLeft roomId={} gameId={} userId={} version={}",
                     roomId, game.getId(), userId, version);
             log.info("[UNO] room closed or updated roomId={} status={}", roomId, RoomStatus.CLOSED);
-            wsService.broadcastRoomDeleted(roomId, game.getId(), user.getUsername() + " left the room");
+            wsService.broadcastRoomDeleted(roomId, game.getId(), departureMessage);
             gameRepository.delete(game);
             roomRepository.delete(room);
 
@@ -975,7 +1000,7 @@ public class GameService {
                 && game.getStatus() == GameStatus.PLAYING
                 && remainingPlayers.size() >= 2) {
             if (userId.equals(game.getCurrentTurn())) {
-                game.setCurrentTurn(resolveTurnAfterDeparture(game, leavingPlayer, remainingPlayers));
+                beginTurn(game, resolveTurnAfterDeparture(game, leavingPlayer, remainingPlayers));
             }
             reseatPlayers(remainingPlayers);
             if (room.getHost().getId().equals(userId)) {
@@ -987,14 +1012,14 @@ public class GameService {
             log.info("[SYNC] action=playerLeftContinuingGame roomId={} gameId={} userId={} currentTurn={} version={}",
                     roomId, game.getId(), userId, game.getCurrentTurn(), version);
 
-            String message = user.getUsername() + " left the room";
+            String message = departureMessage;
             Map<String, Object> roomState = getRoomStateWithVersion(room, game);
-            wsService.broadcastRoomState(roomState, "PLAYER_LEFT", message);
-            wsService.broadcastLobbyRoomState(roomState, "PLAYER_LEFT", message);
+            wsService.broadcastRoomState(roomState, eventType, message);
+            wsService.broadcastLobbyRoomState(roomState, eventType, message);
             wsService.broadcastPublicGamePatch(buildPublicGamePatch(
                     game,
                     remainingPlayers,
-                    "PLAYER_LEFT",
+                    eventType,
                     userId,
                     user.getUsername(),
                     message));
@@ -1016,8 +1041,8 @@ public class GameService {
                     roomId, game.getId(), userId, version);
             log.info("[UNO] room closed or updated roomId={} status={}", roomId, room.getStatus());
             log.info("[UNO] broadcasting PLAYER_LEFT roomId={}", roomId);
-            wsService.broadcastRoomState(getRoomStateWithVersion(room, game), "PLAYER_LEFT", "Opponent left the room");
-            wsService.broadcastRoomDeleted(roomId, game.getId(), user.getUsername() + " left the room");
+            wsService.broadcastRoomState(getRoomStateWithVersion(room, game), eventType, departureMessage);
+            wsService.broadcastRoomDeleted(roomId, game.getId(), departureMessage);
             gamePlayerRepository.deleteAllByGame(game);
             gameRepository.delete(game);
             roomRepository.delete(room);
@@ -1100,6 +1125,7 @@ public class GameService {
         }
         clearPendingDraw(game);
         clearRematchReady(game);
+        clearConsecutiveTurnTimeouts(game);
         dealCards(game, deck);
         gameRepository.save(game);
     }
@@ -1130,7 +1156,7 @@ public class GameService {
 
         saveDeckState(game, deck);
         game.setCurrentColor(firstDiscard.color());
-        game.setCurrentTurn(players.get(0).getUser().getId());
+        beginTurn(game, players.get(0).getUser().getId());
     }
 
     Card drawInitialNumberCard(Deck deck) {
@@ -1236,7 +1262,7 @@ public class GameService {
                 discardAllMatchingColor(game, player, card.color());
                 break;
             case SKIP_ALL:
-                game.setCurrentTurn(playerId);
+                beginTurn(game, playerId);
                 handledTurnAdvance = true;
                 break;
             case WILD_DRAW_FOUR:
@@ -1598,6 +1624,8 @@ public class GameService {
     private void moveToNextPlayer(Game game) {
         List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
         if (players.isEmpty()) {
+            game.setCurrentTurn(null);
+            game.setTurnEndsAtEpochMs(null);
             return;
         }
 
@@ -1611,12 +1639,29 @@ public class GameService {
         }
 
         if (currentIndex == -1) {
-            game.setCurrentTurn(players.get(0).getUser().getId());
+            beginTurn(game, players.get(0).getUser().getId());
             return;
         }
 
         int nextIndex = nextSeatIndex(currentIndex, players.size(), game.isClockwise(), 1);
-        game.setCurrentTurn(players.get(nextIndex).getUser().getId());
+        beginTurn(game, players.get(nextIndex).getUser().getId());
+    }
+
+    private void beginTurn(Game game, Long playerId) {
+        game.setCurrentTurn(playerId);
+        game.setTurnEndsAtEpochMs(playerId == null ? null : System.currentTimeMillis() + TURN_TIME_LIMIT_MS);
+    }
+
+    private void resetConsecutiveTurnTimeouts(GamePlayer player) {
+        if (player != null && player.getConsecutiveTurnTimeouts() != 0) {
+            player.setConsecutiveTurnTimeouts(0);
+        }
+    }
+
+    private void clearConsecutiveTurnTimeouts(Game game) {
+        for (GamePlayer player : gamePlayerRepository.findByGameOrderBySeatIndexAsc(game)) {
+            player.setConsecutiveTurnTimeouts(0);
+        }
     }
 
     int nextSeatIndex(int currentIndex, int playerCount, boolean clockwise, int steps) {
@@ -1718,6 +1763,7 @@ public class GameService {
         game.setStatus(GameStatus.FINISHED);
         game.setFinishReason(GameFinishReason.DRAW_PILE_EXHAUSTED);
         game.setCurrentTurn(null);
+        game.setTurnEndsAtEpochMs(null);
         clearPendingDraw(game);
         roomService.closeRoom(game.getRoom());
         log.info("[UNO] finite draw pile exhausted gameId={} roomId={} winner={}",
@@ -1747,6 +1793,7 @@ public class GameService {
         game.setStatus(GameStatus.FINISHED);
         game.setFinishReason(GameFinishReason.TIME_LIMIT);
         game.setCurrentTurn(null);
+        game.setTurnEndsAtEpochMs(null);
         clearPendingDraw(game);
         roomService.closeRoom(game.getRoom());
         gameRepository.save(game);
@@ -1781,12 +1828,116 @@ public class GameService {
         return true;
     }
 
-    private Map<String, Object> finishExpiredTimedGameBeforeAction(Long gameId, Long roomId) {
+    private Map<String, Object> resolveExpiredTimersBeforeAction(Long gameId, Long roomId) {
         Game game = gameRepository.findById(gameId).orElse(null);
-        if (!finishGameIfTimerExpired(game, System.currentTimeMillis())) {
-            return null;
+        long now = System.currentTimeMillis();
+        if (finishGameIfTimerExpired(game, now)) {
+            return operationAck(roomId, gameId, getCurrentStateVersion(roomId, game), "GAME_FINISHED");
         }
-        return operationAck(roomId, gameId, getCurrentStateVersion(roomId, game), "GAME_FINISHED");
+        if (resolveTurnTimeout(game, now)) {
+            Game current = gameRepository.findById(gameId).orElse(game);
+            return operationAck(roomId, gameId, getCurrentStateVersion(roomId, current), "TURN_TIMEOUT");
+        }
+        return null;
+    }
+
+    boolean resolveTurnTimeout(Game game, long now) {
+        if (game == null
+                || game.getStatus() != GameStatus.PLAYING
+                || game.getRoom() == null
+                || game.getCurrentTurn() == null
+                || game.getTurnEndsAtEpochMs() == null
+                || game.getTurnEndsAtEpochMs() > now) {
+            return false;
+        }
+
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        GamePlayer timedOutPlayer = players.stream()
+                .filter(player -> game.getCurrentTurn().equals(player.getUser().getId()))
+                .findFirst()
+                .orElse(null);
+        if (timedOutPlayer == null) {
+            game.setTurnEndsAtEpochMs(null);
+            gameRepository.save(game);
+            return false;
+        }
+
+        int timeoutCount = timedOutPlayer.getConsecutiveTurnTimeouts() + 1;
+        timedOutPlayer.setConsecutiveTurnTimeouts(timeoutCount);
+        gamePlayerRepository.save(timedOutPlayer);
+        Long timedOutUserId = timedOutPlayer.getUser().getId();
+        String timedOutUsername = timedOutPlayer.getUser().getUsername();
+
+        if (timeoutCount >= AFK_TIMEOUT_LIMIT) {
+            game.setTurnEndsAtEpochMs(null);
+            gameRepository.save(game);
+            log.info("[UNO] AFK player removed roomId={} gameId={} playerId={} consecutiveTimeouts={}",
+                    game.getRoom().getId(), game.getId(), timedOutUserId, timeoutCount);
+            doLeaveRoom(
+                    game.getRoom().getId(),
+                    timedOutUserId,
+                    "PLAYER_AFK_REMOVED",
+                    timedOutUsername + " was removed after 3 consecutive turn timeouts");
+            return true;
+        }
+
+        int drawnCount;
+        boolean acceptedPenalty = hasPendingDraw(game);
+        if (acceptedPenalty) {
+            drawnCount = game.getPendingDrawCount();
+            drawCardsToPlayer(game, timedOutPlayer, drawnCount);
+            clearPendingDraw(game);
+        } else {
+            Deck deck = getDeck(game);
+            Card drawn = deck.drawCard();
+            drawnCount = drawn == null ? 0 : 1;
+            if (drawn != null) {
+                List<Card> hand = timedOutPlayer.getHandCards();
+                hand.add(drawn);
+                setSortedHand(timedOutPlayer, hand);
+                timedOutPlayer.setSaidUno(false);
+                gamePlayerRepository.save(timedOutPlayer);
+            }
+            saveDeckState(game, deck);
+            finishGameIfFinitePileExhausted(game, deck);
+        }
+
+        boolean gameFinished = game.getStatus() == GameStatus.FINISHED;
+        if (!gameFinished) {
+            moveToNextPlayer(game);
+        }
+        gameRepository.save(game);
+        long version = bumpStateVersion(game.getRoom().getId());
+
+        List<GamePlayer> updatedPlayers = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        String message = acceptedPenalty
+                ? timedOutUsername + " timed out and accepted " + drawnCount + " penalty cards"
+                : timedOutUsername + " timed out and automatically drew a card";
+        String eventType = gameFinished ? "GAME_FINISHED" : "TURN_TIMEOUT";
+        PublicGamePatch publicPatch = buildPublicGamePatch(
+                game,
+                updatedPlayers,
+                eventType,
+                timedOutUserId,
+                timedOutUsername,
+                message);
+        PrivateHandPatchDelivery privateHandPatch = buildPrivateHandPatchDelivery(
+                game,
+                timedOutPlayer,
+                "HAND_UPDATED");
+        Map<String, Object> roomState = gameFinished ? getRoomStateWithVersion(game.getRoom(), game) : null;
+        log.info("[UNO] turn timeout roomId={} gameId={} playerId={} consecutiveTimeouts={} acceptedPenalty={} drawnCount={} nextPlayer={} version={}",
+                game.getRoom().getId(), game.getId(), timedOutUserId, timeoutCount, acceptedPenalty,
+                drawnCount, game.getCurrentTurn(), version);
+        publishAfterCommit("turnTimeout", () -> {
+            if (roomState != null) {
+                wsService.broadcastRoomState(roomState, "GAME_FINISHED", message);
+                wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", "Game finished");
+            }
+            wsService.broadcastPublicGamePatch(publicPatch);
+            sendPrivateHandPatch(privateHandPatch);
+        });
+        return true;
     }
 
     private String resolveWinnerName(List<GamePlayer> players, Long winnerId) {
@@ -1930,6 +2081,7 @@ public class GameService {
                     game.getRoom().getStatus().name(),
                     game.getRoom().isGameTimerEnabled(),
                     game.getTimerEndsAtEpochMs(),
+                    game.getTurnEndsAtEpochMs(),
                     game.getFinishReason() != null ? game.getFinishReason().name() : null,
                     publicPlayers,
                     winnerId,
