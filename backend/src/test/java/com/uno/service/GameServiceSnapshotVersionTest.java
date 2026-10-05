@@ -34,7 +34,10 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -229,7 +232,7 @@ class GameServiceSnapshotVersionTest {
         RoomRepository roomRepository = mock(RoomRepository.class);
         UserRepository userRepository = mock(UserRepository.class);
         RecordingTemplate template = new RecordingTemplate();
-        GameWebSocketService wsService = new GameWebSocketService(template);
+        GameWebSocketService wsService = spy(new GameWebSocketService(template));
         RoomService roomService = new RoomService(roomRepository, gameRepository, gamePlayerRepository);
 
         GameService gameService = new GameService(
@@ -275,6 +278,7 @@ class GameServiceSnapshotVersionTest {
         assertEquals("LOBBY_EVENT", lobbyPayload.get("type"));
         assertEquals("PLAYER_JOINED", lobbyPayload.get("event"));
         assertEquals(30L, lobbyPayload.get("roomId"));
+        verify(wsService).sendLobbyActivityNotification(anyMap(), eq("PLAYER_JOINED"), eq(bob));
         @SuppressWarnings("unchecked")
         Map<String, Object> roomState = (Map<String, Object>) lobbyPayload.get("roomState");
         assertEquals(2, roomState.get("playerCount"));

@@ -337,7 +337,11 @@ public class GameService {
 
             Map<String, Object> roomState = getRoomStateWithVersion(room, game);
             wsService.broadcastRoomState(roomState, "PLAYER_JOINED", user.getUsername() + " joined the room");
-            wsService.broadcastLobbyRoomState(roomState, "PLAYER_JOINED", user.getUsername() + " joined the room");
+            wsService.broadcastLobbyRoomState(roomState, "PLAYER_JOINED", null);
+            boolean initialHostJoin = playerCount == 0 && room.getHost().getId().equals(user.getId());
+            if (!initialHostJoin) {
+                wsService.sendLobbyActivityNotification(roomState, "PLAYER_JOINED", user);
+            }
         }
 
         int currentPlayerCount = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game).size();

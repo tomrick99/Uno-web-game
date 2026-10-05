@@ -13,5 +13,6 @@ public interface GamePlayerRepository extends JpaRepository<GamePlayer, Long> {
     List<GamePlayer> findByGame(Game game);
     List<GamePlayer> findByGameOrderBySeatIndexAsc(Game game);
     Optional<GamePlayer> findByGameAndUser(Game game, User user);
+    boolean existsByUser(User user);
     void deleteAllByGame(Game game);
 }

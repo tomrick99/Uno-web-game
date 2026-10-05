@@ -68,7 +68,8 @@ public class RoomController {
                     safeRequest.getGameMode());
             gameService.joinGame(room.getId(), user.getId());
             Map<String, Object> roomState = roomService.getRoomState(room.getId());
-            wsService.broadcastLobbyRoomState(roomState, "ROOM_CREATED", "Room created");
+            wsService.broadcastLobbyRoomState(roomState, "ROOM_CREATED", null);
+            wsService.sendLobbyActivityNotification(roomState, "ROOM_CREATED", user);
             return ApiResponse.success("Room created", roomState);
         } catch (IllegalArgumentException e) {
             return ApiResponse.error(400, e.getMessage());

@@ -65,8 +65,10 @@ class RoomControllerTest {
         assertEquals(42L, gameService.joinedRoomId);
         assertEquals(7L, gameService.joinedUserId);
         assertTrue(wsService.lobbyBroadcasted);
+        assertTrue(wsService.lobbyActivitySent);
         assertEquals("ROOM_CREATED", wsService.lastEvent);
         assertEquals(roomState, wsService.lastRoomState);
+        assertEquals(host, wsService.lastActor);
     }
 
     private static final class FakeRoomService extends RoomService {
@@ -122,8 +124,10 @@ class RoomControllerTest {
 
     private static final class FakeWebSocketService extends GameWebSocketService {
         private boolean lobbyBroadcasted;
+        private boolean lobbyActivitySent;
         private String lastEvent;
         private Map<String, Object> lastRoomState;
+        private User lastActor;
 
         private FakeWebSocketService() {
             super(null);
@@ -134,6 +138,14 @@ class RoomControllerTest {
             lobbyBroadcasted = true;
             lastEvent = event;
             lastRoomState = roomState;
+        }
+
+        @Override
+        public void sendLobbyActivityNotification(Map<String, Object> roomState, String event, User actor) {
+            lobbyActivitySent = true;
+            lastEvent = event;
+            lastRoomState = roomState;
+            lastActor = actor;
         }
     }
 }

@@ -2,9 +2,14 @@ package com.uno.websocket;
 
 import com.uno.dto.realtime.PrivateHandPatch;
 import com.uno.dto.realtime.PublicGamePatch;
+import com.uno.entity.User;
+import com.uno.repository.GamePlayerRepository;
+import com.uno.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.messaging.simp.user.SimpUserRegistry;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
@@ -15,11 +20,30 @@ public class GameWebSocketService {
 
     private static final Logger log = LoggerFactory.getLogger(GameWebSocketService.class);
     private static final String LOBBY_TOPIC = "/topic/lobby";
+    private static final String LOBBY_ACTIVITY_QUEUE = "/queue/lobby-activity";
 
     private final SimpMessagingTemplate messagingTemplate;
+    private final SimpUserRegistry userRegistry;
+    private final UserRepository userRepository;
+    private final GamePlayerRepository gamePlayerRepository;
 
+    @Autowired
+    public GameWebSocketService(SimpMessagingTemplate messagingTemplate,
+                                SimpUserRegistry userRegistry,
+                                UserRepository userRepository,
+                                GamePlayerRepository gamePlayerRepository) {
+        this.messagingTemplate = messagingTemplate;
+        this.userRegistry = userRegistry;
+        this.userRepository = userRepository;
+        this.gamePlayerRepository = gamePlayerRepository;
+    }
+
+    // Kept for focused unit tests that only exercise room/game broadcasts.
     public GameWebSocketService(SimpMessagingTemplate messagingTemplate) {
         this.messagingTemplate = messagingTemplate;
+        this.userRegistry = null;
+        this.userRepository = null;
+        this.gamePlayerRepository = null;
     }
 
     public void broadcastRoomState(Map<String, Object> roomState, String event, String message) {
@@ -69,6 +93,44 @@ public class GameWebSocketService {
 
         log.info("[LOBBY] broadcast type={} roomId={}", event, roomId);
         timedSend(LOBBY_TOPIC, payload, roomId, event);
+    }
+
+    public void sendLobbyActivityNotification(Map<String, Object> roomState, String event, User actor) {
+        if (userRegistry == null || userRepository == null || gamePlayerRepository == null) {
+            return;
+        }
+
+        Object roomId = roomState.get("roomId");
+        Object roomCodeValue = roomState.get("roomCode");
+        String roomCode = roomCodeValue != null ? String.valueOf(roomCodeValue) : String.valueOf(roomId);
+        String action = "ROOM_CREATED".equals(event) ? "created room" : "joined room";
+
+        Map<String, Object> actorInfo = new LinkedHashMap<>();
+        actorInfo.put("userId", actor.getId());
+        actorInfo.put("username", actor.getUsername());
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("type", "LOBBY_ACTIVITY");
+        payload.put("event", event);
+        payload.put("roomId", roomId);
+        payload.put("roomCode", roomCodeValue);
+        payload.put("actor", actorInfo);
+        payload.put("actorUserId", actor.getId());
+        payload.put("actorUsername", actor.getUsername());
+        payload.put("message", actor.getUsername() + " " + action + " " + roomCode);
+        payload.put("timestamp", System.currentTimeMillis());
+
+        int recipientCount = 0;
+        for (org.springframework.messaging.simp.user.SimpUser connectedUser : userRegistry.getUsers()) {
+            User recipient = userRepository.findByUsername(connectedUser.getName()).orElse(null);
+            if (recipient == null || gamePlayerRepository.existsByUser(recipient)) {
+                continue;
+            }
+            timedSendToUser(recipient.getUsername(), LOBBY_ACTIVITY_QUEUE, payload, roomId, event);
+            recipientCount++;
+        }
+        log.info("[LOBBY] activity type={} roomId={} actor={} recipients={}",
+                event, roomId, actor.getUsername(), recipientCount);
     }
 
     public void broadcastRoomDeleted(Long roomId, Long gameId, String message) {
@@ -166,7 +228,7 @@ public class GameWebSocketService {
         long startedAt = System.nanoTime();
         messagingTemplate.convertAndSendToUser(username, destination, payload);
         long costMs = (System.nanoTime() - startedAt) / 1_000_000;
-        log.info("[PERF] action=sendPrivateHandPatch roomId={} destination=/user{} user={} event={} costMs={}",
+        log.info("[PERF] action=userWebsocketSend roomId={} destination=/user{} user={} event={} costMs={}",
                 roomId,
                 destination,
                 username,

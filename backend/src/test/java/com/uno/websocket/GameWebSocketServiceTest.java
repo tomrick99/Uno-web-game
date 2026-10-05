@@ -3,22 +3,97 @@ package com.uno.websocket;
 import com.uno.dto.realtime.PrivateHandPatch;
 import com.uno.dto.realtime.PublicGamePatch;
 import com.uno.dto.realtime.PublicPlayerInfo;
+import com.uno.entity.User;
+import com.uno.repository.GamePlayerRepository;
+import com.uno.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.messaging.simp.user.SimpUser;
+import org.springframework.messaging.simp.user.SimpUserRegistry;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class GameWebSocketServiceTest {
+
+    @Test
+    void roomCreatedActivityIsSentOnlyToConnectedUsersOutsideRooms() {
+        RecordingTemplate template = new RecordingTemplate();
+        SimpUserRegistry registry = mock(SimpUserRegistry.class);
+        UserRepository userRepository = mock(UserRepository.class);
+        GamePlayerRepository gamePlayerRepository = mock(GamePlayerRepository.class);
+        GameWebSocketService service = new GameWebSocketService(
+                template, registry, userRepository, gamePlayerRepository);
+
+        User alice = user(1L, "alice");
+        User tom = user(2L, "tom");
+        User bob = user(3L, "bob");
+        SimpUser connectedAlice = connectedUser("alice");
+        SimpUser connectedTom = connectedUser("tom");
+        SimpUser connectedBob = connectedUser("bob");
+        when(registry.getUsers()).thenReturn(Set.of(connectedAlice, connectedTom, connectedBob));
+        when(userRepository.findByUsername("alice")).thenReturn(java.util.Optional.of(alice));
+        when(userRepository.findByUsername("tom")).thenReturn(java.util.Optional.of(tom));
+        when(userRepository.findByUsername("bob")).thenReturn(java.util.Optional.of(bob));
+        when(gamePlayerRepository.existsByUser(bob)).thenReturn(true);
+
+        service.sendLobbyActivityNotification(roomState(12L, "ROOM-A"), "ROOM_CREATED", bob);
+
+        assertEquals(Set.of("alice", "tom"), Set.copyOf(template.users));
+        assertFalse(template.users.contains("bob"));
+        assertTrue(template.userDestinations.stream().allMatch("/queue/lobby-activity"::equals));
+        Map<?, ?> payload = (Map<?, ?>) template.userPayloads.get(0);
+        assertEquals("LOBBY_ACTIVITY", payload.get("type"));
+        assertEquals("ROOM_CREATED", payload.get("event"));
+        assertEquals("ROOM-A", payload.get("roomCode"));
+        assertEquals("bob", payload.get("actorUsername"));
+        assertEquals("bob created room ROOM-A", payload.get("message"));
+    }
+
+    @Test
+    void playerJoinedActivityExcludesEveryConnectedRoomParticipant() {
+        RecordingTemplate template = new RecordingTemplate();
+        SimpUserRegistry registry = mock(SimpUserRegistry.class);
+        UserRepository userRepository = mock(UserRepository.class);
+        GamePlayerRepository gamePlayerRepository = mock(GamePlayerRepository.class);
+        GameWebSocketService service = new GameWebSocketService(
+                template, registry, userRepository, gamePlayerRepository);
+
+        User alice = user(1L, "alice");
+        User bob = user(2L, "bob");
+        User charlie = user(3L, "charlie");
+        SimpUser connectedAlice = connectedUser("alice");
+        SimpUser connectedBob = connectedUser("bob");
+        SimpUser connectedCharlie = connectedUser("charlie");
+        when(registry.getUsers()).thenReturn(Set.of(connectedAlice, connectedBob, connectedCharlie));
+        when(userRepository.findByUsername("alice")).thenReturn(java.util.Optional.of(alice));
+        when(userRepository.findByUsername("bob")).thenReturn(java.util.Optional.of(bob));
+        when(userRepository.findByUsername("charlie")).thenReturn(java.util.Optional.of(charlie));
+        when(gamePlayerRepository.existsByUser(bob)).thenReturn(true);
+        when(gamePlayerRepository.existsByUser(charlie)).thenReturn(true);
+
+        service.sendLobbyActivityNotification(roomState(12L, "ROOM-A"), "PLAYER_JOINED", charlie);
+
+        assertEquals(List.of("alice"), template.users);
+        Map<?, ?> payload = (Map<?, ?>) template.userPayloads.get(0);
+        assertEquals("PLAYER_JOINED", payload.get("event"));
+        assertEquals(12L, payload.get("roomId"));
+        assertEquals("charlie", payload.get("actorUsername"));
+        assertEquals("charlie joined room ROOM-A", payload.get("message"));
+    }
 
     @Test
     void lobbyRoomStateBroadcastUsesLobbyTopic() {
@@ -190,12 +265,34 @@ class GameWebSocketServiceTest {
                 .orElse(null);
     }
 
+    private static User user(Long id, String username) {
+        User user = new User(username, "pw");
+        user.setId(id);
+        return user;
+    }
+
+    private static SimpUser connectedUser(String username) {
+        SimpUser user = mock(SimpUser.class);
+        when(user.getName()).thenReturn(username);
+        return user;
+    }
+
+    private static Map<String, Object> roomState(Long roomId, String roomCode) {
+        Map<String, Object> state = new LinkedHashMap<>();
+        state.put("roomId", roomId);
+        state.put("roomCode", roomCode);
+        return state;
+    }
+
     private static final class RecordingTemplate extends SimpMessagingTemplate {
         private String destination;
         private Object payload;
         private String user;
         private String userDestination;
         private Object userPayload;
+        private final List<String> users = new ArrayList<>();
+        private final List<String> userDestinations = new ArrayList<>();
+        private final List<Object> userPayloads = new ArrayList<>();
 
         private RecordingTemplate() {
             super(new NoOpMessageChannel());
@@ -212,6 +309,9 @@ class GameWebSocketServiceTest {
             this.user = user;
             this.userDestination = destination;
             this.userPayload = payload;
+            this.users.add(user);
+            this.userDestinations.add(destination);
+            this.userPayloads.add(payload);
         }
     }
 

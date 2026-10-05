@@ -20,6 +20,7 @@ createApp({
 
         const stompClient = ref(null);
         const lobbySubscription = ref(null);
+        const lobbyActivitySubscription = ref(null);
 
         let reconnectTimer = null;
         let fallbackActivationTimer = null;
@@ -194,6 +195,10 @@ createApp({
                 lobbySubscription.value.unsubscribe();
                 lobbySubscription.value = null;
             }
+            if (lobbyActivitySubscription.value) {
+                lobbyActivitySubscription.value.unsubscribe();
+                lobbyActivitySubscription.value = null;
+            }
             if (stompClient.value) {
                 try {
                     if (typeof stompClient.value.deactivate === "function") {
@@ -210,8 +215,9 @@ createApp({
         };
 
         const subscribeLobbyTopic = () => {
-            if (!stompClient.value || !wsConnected.value || lobbySubscription.value) return;
-            lobbySubscription.value = stompClient.value.subscribe("/topic/lobby", (message) => {
+            if (!stompClient.value || !wsConnected.value) return;
+            if (!lobbySubscription.value) {
+                lobbySubscription.value = stompClient.value.subscribe("/topic/lobby", (message) => {
                 let payload = {};
                 try {
                     payload = JSON.parse(message.body || "{}");
@@ -226,14 +232,29 @@ createApp({
                 if (event.type === "ROOM_REMOVED") {
                     removeRoomLocally(event.roomId);
                 }
-                if (payload.message) {
+                if (payload.message && !["ROOM_CREATED", "PLAYER_JOINED"].includes(event.type)) {
                     infoMsg.value = payload.message;
                     setTimeout(() => {
                         if (infoMsg.value === payload.message) infoMsg.value = "";
                     }, 2500);
                 }
                 queueRoomsRefresh(300);
-            });
+                });
+            }
+            if (!lobbyActivitySubscription.value) {
+                lobbyActivitySubscription.value = stompClient.value.subscribe("/user/queue/lobby-activity", (message) => {
+                    try {
+                        const payload = JSON.parse(message.body || "{}");
+                        if (payload.type !== "LOBBY_ACTIVITY" || !payload.message) return;
+                        infoMsg.value = payload.message;
+                        setTimeout(() => {
+                            if (infoMsg.value === payload.message) infoMsg.value = "";
+                        }, 3500);
+                    } catch (error) {
+                        console.error(error);
+                    }
+                });
+            }
         };
 
         const scheduleReconnect = () => {
@@ -289,7 +310,7 @@ createApp({
                 stopFallbackPolling();
                 updateConnectionMode();
                 subscribeLobbyTopic();
-                console.info("[UNO-LOBBY] ws connected, subscribed /topic/lobby");
+                console.info("[UNO-LOBBY] ws connected, subscribed to lobby updates and activity");
                 await loadRooms();
             };
 
