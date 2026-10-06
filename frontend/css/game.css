@@ -688,6 +688,63 @@
     color: var(--red);
 }
 
+.disconnect-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(5, 8, 18, 0.76);
+    backdrop-filter: blur(5px);
+}
+
+.disconnect-card {
+    width: min(92vw, 460px);
+    padding: 32px;
+    text-align: center;
+    background: var(--bg-dark2);
+    border: 1px solid rgba(243, 156, 18, 0.5);
+    border-radius: 20px;
+    box-shadow: 0 22px 70px rgba(0, 0, 0, 0.45);
+}
+
+.disconnect-icon {
+    display: grid;
+    place-items: center;
+    width: 52px;
+    height: 52px;
+    margin: 0 auto 16px;
+    color: #151515;
+    background: var(--yellow);
+    border-radius: 50%;
+    font-size: 30px;
+    font-weight: 800;
+}
+
+.disconnect-card h2 {
+    margin-bottom: 12px;
+}
+
+.disconnect-card p,
+.disconnect-votes {
+    color: var(--text-secondary);
+    line-height: 1.55;
+}
+
+.disconnect-countdown {
+    margin: 22px 0 12px;
+    color: var(--yellow);
+    font-size: 24px;
+    font-weight: 700;
+}
+
+.disconnect-continue {
+    width: 100%;
+    margin-top: 22px;
+}
+
 .btn-secondary {
     padding: 12px 22px;
     background: rgba(255, 255, 255, 0.12);

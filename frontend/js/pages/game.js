@@ -59,6 +59,14 @@ createApp({
         const hasLoadedHand = ref(false);
         const autoPenaltyInProgress = ref(false);
         const lastAutoPenaltyKey = ref("");
+        const disconnectGraceActive = ref(false);
+        const disconnectedPlayerId = ref(null);
+        const disconnectedPlayerName = ref("");
+        const disconnectGraceDeadline = ref(null);
+        const continueApprovedPlayerIds = ref([]);
+        const eligibleContinuePlayerIds = ref([]);
+        const continueVoteSubmitting = ref(false);
+        const graceClock = ref(Date.now());
 
         const stompClient = shallowRef(null);
         const roomSubscription = ref(null);
@@ -79,6 +87,7 @@ createApp({
         let pendingRealtimeBatchTimer = null;
         let gameStartConsistencyTimer = null;
         let lastGameStartConsistencyKey = null;
+        let graceClockTimer = null;
 
         const colorMap = {
             RED: "#E74C3C",
@@ -145,6 +154,13 @@ createApp({
                 ready: "已准备",
                 submitting: "提交中...",
                 rematch: "再来一局",
+                disconnectedTitle: "游戏已暂停",
+                disconnectedWaiting: "{name} 已断线，正在等待该玩家重新连接。",
+                disconnectedRemaining: "剩余等待时间：{seconds} 秒",
+                continueWithoutPlayer: "不等待该玩家，继续游戏",
+                continueVoteProgress: "继续游戏同意数：{approved} / {eligible}",
+                continueVoteRecorded: "已同意，等待其他在线玩家",
+                continueVoteSubmitting: "正在提交...",
                 gameOver: "游戏结束",
                 wins: "获胜",
                 cardNumber: "数字牌：颜色相同或数字相同即可出。",
@@ -223,6 +239,13 @@ createApp({
                 ready: "Ready",
                 submitting: "Submitting...",
                 rematch: "Rematch",
+                disconnectedTitle: "Game paused",
+                disconnectedWaiting: "{name} disconnected. Waiting for this player to reconnect.",
+                disconnectedRemaining: "Time remaining: {seconds}s",
+                continueWithoutPlayer: "Continue without this player",
+                continueVoteProgress: "Continue approvals: {approved} / {eligible}",
+                continueVoteRecorded: "Approved; waiting for the other online players",
+                continueVoteSubmitting: "Submitting...",
                 gameOver: "Game over",
                 wins: "wins",
                 cardNumber: "Number: play on matching color or matching number.",
@@ -292,7 +315,11 @@ createApp({
             Number(pendingDrawCount.value) > 0 && pendingDrawType.value !== "NONE"
         );
         const canDraw = computed(() =>
-            gameStatus.value === "PLAYING" && isMyTurn.value && !isPendingDrawStack.value && !drawingCard.value
+            gameStatus.value === "PLAYING"
+            && !disconnectGraceActive.value
+            && isMyTurn.value
+            && !isPendingDrawStack.value
+            && !drawingCard.value
         );
         const playerCount = computed(() =>
             Number(roomPlayerCount.value || tablePlayers.value.length || opponents.value.length + 1)
@@ -310,6 +337,19 @@ createApp({
         };
         const currentColorLabel = computed(() => colorName(currentColor.value));
         const connectionLabel = computed(() => t(connectionMode.value));
+        const disconnectSecondsRemaining = computed(() => {
+            if (!disconnectGraceActive.value || !disconnectGraceDeadline.value) return 0;
+            return Math.max(0, Math.ceil((Number(disconnectGraceDeadline.value) - graceClock.value) / 1000));
+        });
+        const hasApprovedContinue = computed(() =>
+            continueApprovedPlayerIds.value.some((id) => String(id) === String(userId.value))
+        );
+        const canVoteToContinue = computed(() =>
+            disconnectGraceActive.value
+            && String(disconnectedPlayerId.value) !== String(userId.value)
+            && !hasApprovedContinue.value
+            && !continueVoteSubmitting.value
+        );
 
         const getCardDisplay = (type, value) => {
             if (type === "NUMBER") return String(value);
@@ -434,6 +474,7 @@ createApp({
         const evaluatePlayability = (card, discardTopCard, activeColor) => {
             if (!card || !card.type || !card.color) return { canPlay: false, reason: "invalid card" };
             if (gameStatus.value !== "PLAYING") return { canPlay: false, reason: "game not playing" };
+            if (disconnectGraceActive.value) return { canPlay: false, reason: "game paused" };
             if (!isMyTurn.value) return { canPlay: false, reason: "not current player" };
             if (isPendingDrawStack.value) return getPendingReason(card);
             if (isWildType(card.type)) return { canPlay: true, reason: "wild card" };
@@ -561,6 +602,7 @@ createApp({
 
         const turnLabel = computed(() => {
             if (gameStatus.value === "FINISHED") return t("gameFinished");
+            if (disconnectGraceActive.value) return t("disconnectedTitle");
             if (gameStatus.value !== "PLAYING") {
                 return `${t("waitingPlayers")} (${playerCount.value}/${maxPlayers.value})`;
             }
@@ -623,7 +665,11 @@ createApp({
 
         const syncPendingDrawUiState = () => {
             clearAutoPenaltyTimer();
-            if (!isPendingDrawStack.value || !hasLoadedHand.value || !isMyTurn.value || gameStatus.value !== "PLAYING") {
+            if (disconnectGraceActive.value
+                    || !isPendingDrawStack.value
+                    || !hasLoadedHand.value
+                    || !isMyTurn.value
+                    || gameStatus.value !== "PLAYING") {
                 autoPenaltyInProgress.value = false;
                 lastAutoPenaltyKey.value = "";
                 return;
@@ -715,6 +761,13 @@ createApp({
             pendingDrawCount.value = 0;
             pendingDrawType.value = "NONE";
             lastPenaltyPlayerId.value = null;
+            disconnectGraceActive.value = false;
+            disconnectedPlayerId.value = null;
+            disconnectedPlayerName.value = "";
+            disconnectGraceDeadline.value = null;
+            continueApprovedPlayerIds.value = [];
+            eligibleContinuePlayerIds.value = [];
+            continueVoteSubmitting.value = false;
             drawPileSize.value = 0;
             topCard.value = null;
             handCards.value = [];
@@ -890,6 +943,13 @@ createApp({
                 copyField("drawPileSize");
                 copyField("winnerId");
                 copyField("rematchReadyPlayerIds");
+                copyField("disconnectGraceActive");
+                copyField("disconnectedPlayerId");
+                copyField("disconnectedPlayerName");
+                copyField("disconnectGraceDeadline");
+                copyField("disconnectGraceRemainingSeconds");
+                copyField("continueApprovedPlayerIds");
+                copyField("eligibleContinuePlayerIds");
                 if (hasOwnField(payload, "direction")) {
                     gameState.clockwise = payload.direction !== -1;
                 }
@@ -1062,6 +1122,29 @@ createApp({
             if (hasOwnField(gameState, "pendingDrawCount")) pendingDrawCount.value = Number(gameState.pendingDrawCount ?? 0);
             if (hasOwnField(gameState, "pendingDrawType")) pendingDrawType.value = gameState.pendingDrawType ?? "NONE";
             if (hasOwnField(gameState, "lastPenaltyPlayerId")) lastPenaltyPlayerId.value = gameState.lastPenaltyPlayerId;
+            if (hasOwnField(gameState, "disconnectGraceActive")) {
+                disconnectGraceActive.value = Boolean(gameState.disconnectGraceActive);
+            }
+            if (hasOwnField(gameState, "disconnectedPlayerId")) disconnectedPlayerId.value = gameState.disconnectedPlayerId;
+            if (hasOwnField(gameState, "disconnectedPlayerName")) disconnectedPlayerName.value = gameState.disconnectedPlayerName || "";
+            if (hasOwnField(gameState, "disconnectGraceDeadline")) {
+                disconnectGraceDeadline.value = gameState.disconnectGraceDeadline;
+                graceClock.value = Date.now();
+            }
+            if (Array.isArray(gameState.continueApprovedPlayerIds)) {
+                continueApprovedPlayerIds.value = gameState.continueApprovedPlayerIds;
+            }
+            if (Array.isArray(gameState.eligibleContinuePlayerIds)) {
+                eligibleContinuePlayerIds.value = gameState.eligibleContinuePlayerIds;
+            }
+            if (!disconnectGraceActive.value) {
+                disconnectedPlayerId.value = null;
+                disconnectedPlayerName.value = "";
+                disconnectGraceDeadline.value = null;
+                continueApprovedPlayerIds.value = [];
+                eligibleContinuePlayerIds.value = [];
+                continueVoteSubmitting.value = false;
+            }
             if (hasOwnField(gameState, "drawPileSize")) drawPileSize.value = Number(gameState.drawPileSize ?? 0);
             if (hasOwnField(gameState, "topCard") && gameState.topCard) {
                 topCard.value = {
@@ -1719,6 +1802,24 @@ createApp({
             }
         };
 
+        const continueWithoutPlayerAction = async () => {
+            if (!gameId.value || !canVoteToContinue.value) return;
+            continueVoteSubmitting.value = true;
+            try {
+                const response = await axios.post(`${apiBase}/game/${gameId.value}/disconnect-grace/continue`);
+                if (response.data.code !== 200) {
+                    showToastMessage(response.data.message || t("continueWithoutPlayer"));
+                } else if (shouldRefreshAfterAck(response)) {
+                    await refreshFromServer({ reason: "continue-vote-ack" });
+                }
+            } catch (error) {
+                showToastMessage(error.response?.data?.message || t("continueWithoutPlayer"));
+                await refreshFromServer({ reason: "continue-vote-error" });
+            } finally {
+                continueVoteSubmitting.value = false;
+            }
+        };
+
         const handleDelegatedButtonClick = (event) => {
             const button = event.target.closest("#backToLobbyButton, #endReturnLobbyBtn, #restartGameBtn, #drawPenaltyButton");
             if (!button || button.disabled) return;
@@ -1759,6 +1860,9 @@ createApp({
             window.addEventListener("beforeunload", beforeUnloadHandler);
             delegatedButtonHandler = handleDelegatedButtonClick;
             document.addEventListener("click", delegatedButtonHandler);
+            graceClockTimer = setInterval(() => {
+                graceClock.value = Date.now();
+            }, 250);
 
             shouldReconnect = true;
             connectWebSocket({ resyncOnConnect: false }).then((connected) => {
@@ -1776,11 +1880,16 @@ createApp({
             shouldReconnect = false;
             cleanupRealtime();
             clearAutoPenaltyTimer();
+            if (graceClockTimer) {
+                clearInterval(graceClockTimer);
+                graceClockTimer = null;
+            }
             if (beforeUnloadHandler) window.removeEventListener("beforeunload", beforeUnloadHandler);
             if (delegatedButtonHandler) document.removeEventListener("click", delegatedButtonHandler);
         });
 
         return {
+            userId,
             roomId,
             roomCode,
             roomStatus,
@@ -1821,6 +1930,15 @@ createApp({
             drawingCard,
             drawingPenalty,
             playingCard,
+            disconnectGraceActive,
+            disconnectedPlayerId,
+            disconnectedPlayerName,
+            continueApprovedPlayerIds,
+            eligibleContinuePlayerIds,
+            continueVoteSubmitting,
+            disconnectSecondsRemaining,
+            hasApprovedContinue,
+            canVoteToContinue,
             canDraw,
             canPlaySelected,
             showPenaltyNotice,
@@ -1844,6 +1962,7 @@ createApp({
             drawCardAction,
             drawPenaltyAction,
             restartGameAction,
+            continueWithoutPlayerAction,
             returnToLobby
         };
     }

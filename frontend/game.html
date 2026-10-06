@@ -51,6 +51,28 @@
             </div>
         </header>
 
+        <div v-if="disconnectGraceActive" class="disconnect-overlay">
+            <section class="disconnect-card" role="alert" aria-live="assertive">
+                <div class="disconnect-icon">!</div>
+                <h2>{{ t("disconnectedTitle") }}</h2>
+                <p>{{ t("disconnectedWaiting", { name: disconnectedPlayerName }) }}</p>
+                <div class="disconnect-countdown">{{ t("disconnectedRemaining", { seconds: disconnectSecondsRemaining }) }}</div>
+                <div class="disconnect-votes">
+                    {{ t("continueVoteProgress", { approved: continueApprovedPlayerIds.length, eligible: eligibleContinuePlayerIds.length }) }}
+                </div>
+                <button
+                    v-if="disconnectedPlayerId != userId"
+                    class="btn-primary disconnect-continue"
+                    :disabled="!canVoteToContinue"
+                    @click="continueWithoutPlayerAction"
+                >
+                    {{ continueVoteSubmitting
+                        ? t("continueVoteSubmitting")
+                        : (hasApprovedContinue ? t("continueVoteRecorded") : t("continueWithoutPlayer")) }}
+                </button>
+            </section>
+        </div>
+
         <section class="players-area">
             <div
                 v-for="player in tablePlayers"

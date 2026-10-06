@@ -27,6 +27,13 @@ public record PublicGamePatch(
         List<PublicPlayerInfo> players,
         Long winnerId,
         List<Long> rematchReadyPlayerIds,
+        Boolean disconnectGraceActive,
+        Long disconnectedPlayerId,
+        String disconnectedPlayerName,
+        Long disconnectGraceDeadline,
+        Long disconnectGraceRemainingSeconds,
+        List<Long> continueApprovedPlayerIds,
+        List<Long> eligibleContinuePlayerIds,
         String message,
         Boolean resyncRequired
 ) {

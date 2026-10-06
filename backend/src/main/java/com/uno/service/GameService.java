@@ -22,6 +22,7 @@ import com.uno.repository.UserRepository;
 import com.uno.websocket.GameWebSocketService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -34,6 +35,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
@@ -44,6 +46,7 @@ import java.util.function.Supplier;
 public class GameService {
 
     private static final Logger log = LoggerFactory.getLogger(GameService.class);
+    static final long DISCONNECT_GRACE_PERIOD_MS = 60_000L;
 
     private record PlayValidation(boolean playable, String reason) {}
 
@@ -52,6 +55,13 @@ public class GameService {
                                             Long gameId,
                                             Long userId,
                                             PrivateHandPatch patch) {}
+
+    private record DisconnectGrace(Long roomId,
+                                   Long gameId,
+                                   Long disconnectedPlayerId,
+                                   String disconnectedPlayerName,
+                                   long deadlineEpochMs,
+                                   Set<Long> approvedPlayerIds) {}
 
     private static final com.fasterxml.jackson.databind.ObjectMapper OBJECT_MAPPER =
             new com.fasterxml.jackson.databind.ObjectMapper()
@@ -65,6 +75,8 @@ public class GameService {
     private final RoomService roomService;
     private final ConcurrentHashMap<Long, ReentrantLock> roomLocks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, AtomicLong> roomStateVersions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, DisconnectGrace> disconnectGraceByRoom = new ConcurrentHashMap<>();
+    private final Set<String> connectedUsernames = ConcurrentHashMap.newKeySet();
 
     public GameService(GameRepository gameRepository,
                        GamePlayerRepository gamePlayerRepository,
@@ -131,8 +143,84 @@ public class GameService {
         return withRoomLock(roomId, () -> doRestartGame(gameId, userId));
     }
 
+    public Map<String, Object> continueWithoutDisconnectedPlayer(Long gameId, Long userId) {
+        Long roomId = getRoomIdByGameId(gameId);
+        return withRoomLock(roomId, () -> doContinueWithoutDisconnectedPlayer(gameId, userId));
+    }
+
+    public void playerConnected(String username) {
+        if (username == null || username.isBlank()) {
+            return;
+        }
+        connectedUsernames.add(username);
+        disconnectGraceByRoom.values().stream()
+                .filter(grace -> username.equals(grace.disconnectedPlayerName()))
+                .toList()
+                .forEach(grace -> withRoomLock(grace.roomId(), () -> {
+                    resumeAfterReconnect(grace);
+                    return null;
+                }));
+    }
+
+    public void playerDisconnected(String username) {
+        playerDisconnected(username, System.currentTimeMillis());
+    }
+
+    void playerDisconnected(String username, long disconnectedAtEpochMs) {
+        if (username == null || username.isBlank()) {
+            return;
+        }
+        connectedUsernames.remove(username);
+        User user = userRepository.findByUsername(username).orElse(null);
+        if (user == null) {
+            return;
+        }
+
+        for (GamePlayer player : gamePlayerRepository.findByUser(user)) {
+            Game game = player.getGame();
+            if (game == null || game.getRoom() == null
+                    || game.getStatus() != GameStatus.PLAYING
+                    || game.getRoom().getStatus() != RoomStatus.PLAYING) {
+                continue;
+            }
+            Long roomId = game.getRoom().getId();
+            withRoomLock(roomId, () -> {
+                beginDisconnectGrace(game, player, disconnectedAtEpochMs);
+                return null;
+            });
+        }
+    }
+
+    @Scheduled(fixedRate = 1000L)
+    public void expireDisconnectGracePeriods() {
+        expireDisconnectGracePeriods(System.currentTimeMillis());
+    }
+
+    void expireDisconnectGracePeriods(long nowEpochMs) {
+        disconnectGraceByRoom.values().stream()
+                .filter(grace -> grace.deadlineEpochMs() <= nowEpochMs)
+                .toList()
+                .forEach(grace -> withRoomLock(grace.roomId(), () -> {
+                    DisconnectGrace current = disconnectGraceByRoom.get(grace.roomId());
+                    if (current == grace && current.deadlineEpochMs() <= nowEpochMs) {
+                        removeDisconnectedPlayer(current, "DISCONNECT_TIMEOUT");
+                    }
+                    return null;
+                }));
+    }
+
+    boolean hasActiveDisconnectGrace(Long roomId) {
+        return disconnectGraceByRoom.containsKey(roomId);
+    }
+
+    long disconnectGraceDeadline(Long roomId) {
+        DisconnectGrace grace = disconnectGraceByRoom.get(roomId);
+        return grace == null ? 0L : grace.deadlineEpochMs();
+    }
+
     public void deleteRoomByAdmin(Long roomId, String operatorName) {
         withRoomLock(roomId, () -> {
+            disconnectGraceByRoom.remove(roomId);
             Room room = roomRepository.findById(roomId)
                     .orElseThrow(() -> new IllegalArgumentException("Room not found"));
 
@@ -228,7 +316,8 @@ public class GameService {
         List<Map<String, Object>> players = new ArrayList<>();
         List<Long> rematchReadyPlayerIds = new ArrayList<>();
         Long winnerId = null;
-        for (GamePlayer gp : gamePlayerRepository.findByGameOrderBySeatIndexAsc(game)) {
+        List<GamePlayer> gamePlayers = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        for (GamePlayer gp : gamePlayers) {
             List<Card> hand = sortHandCards(gp.getHandCards());
             if (game.getStatus() == GameStatus.FINISHED && hand.isEmpty()) {
                 winnerId = gp.getUser().getId();
@@ -255,6 +344,7 @@ public class GameService {
                 game.getStatus() == GameStatus.FINISHED
                         && !players.isEmpty()
                         && rematchReadyPlayerIds.size() == players.size());
+        appendDisconnectGraceState(state, roomId, gamePlayers);
         state.put("version", getCurrentStateVersion(roomId, game));
         return state;
     }
@@ -299,6 +389,170 @@ public class GameService {
             long costMs = (System.nanoTime() - startedAt) / 1_000_000;
             log.info("[PERF] action=buildRealtimeSnapshot roomId={} gameId={} userId={} costMs={}",
                     roomId, gameId, userId, costMs);
+        }
+    }
+
+    private void beginDisconnectGrace(Game game, GamePlayer player, long disconnectedAtEpochMs) {
+        Long roomId = game.getRoom().getId();
+        if (disconnectGraceByRoom.containsKey(roomId)) {
+            return;
+        }
+
+        DisconnectGrace grace = new DisconnectGrace(
+                roomId,
+                game.getId(),
+                player.getUser().getId(),
+                player.getUser().getUsername(),
+                disconnectedAtEpochMs + DISCONNECT_GRACE_PERIOD_MS,
+                ConcurrentHashMap.newKeySet()
+        );
+        disconnectGraceByRoom.put(roomId, grace);
+        long version = bumpStateVersion(roomId);
+        log.info("[DISCONNECT] action=graceStarted roomId={} gameId={} userId={} deadline={} version={}",
+                roomId, game.getId(), player.getUser().getId(), grace.deadlineEpochMs(), version);
+        broadcastDisconnectGrace(game, "PLAYER_DISCONNECTED",
+                player.getUser().getUsername() + " disconnected. Waiting up to 60 seconds.");
+    }
+
+    private void resumeAfterReconnect(DisconnectGrace expectedGrace) {
+        DisconnectGrace current = disconnectGraceByRoom.get(expectedGrace.roomId());
+        if (current != expectedGrace) {
+            return;
+        }
+        Game game = gameRepository.findById(current.gameId()).orElse(null);
+        if (game == null || game.getStatus() != GameStatus.PLAYING) {
+            disconnectGraceByRoom.remove(current.roomId(), current);
+            return;
+        }
+
+        disconnectGraceByRoom.remove(current.roomId(), current);
+        long version = bumpStateVersion(current.roomId());
+        log.info("[DISCONNECT] action=playerReconnected roomId={} gameId={} userId={} version={}",
+                current.roomId(), current.gameId(), current.disconnectedPlayerId(), version);
+        broadcastDisconnectGrace(game, "PLAYER_RECONNECTED",
+                current.disconnectedPlayerName() + " reconnected. Game resumed.");
+    }
+
+    private Map<String, Object> doContinueWithoutDisconnectedPlayer(Long gameId, Long userId) {
+        Game game = gameRepository.findById(gameId)
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
+        DisconnectGrace grace = disconnectGraceByRoom.get(game.getRoom().getId());
+        if (grace == null || !grace.gameId().equals(gameId)) {
+            throw new IllegalArgumentException("There is no disconnected player waiting period");
+        }
+        if (grace.disconnectedPlayerId().equals(userId)) {
+            throw new IllegalArgumentException("The disconnected player cannot vote to continue");
+        }
+
+        User voter = userRepository.getReferenceById(userId);
+        gamePlayerRepository.findByGameAndUser(game, voter)
+                .orElseThrow(() -> new IllegalArgumentException("Only current players can vote to continue"));
+        if (!connectedUsernames.contains(voter.getUsername())) {
+            throw new IllegalArgumentException("Only currently connected players can vote to continue");
+        }
+
+        grace.approvedPlayerIds().add(userId);
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        List<Long> eligiblePlayerIds = eligibleContinuePlayerIds(grace, players);
+        boolean unanimous = !eligiblePlayerIds.isEmpty()
+                && grace.approvedPlayerIds().containsAll(eligiblePlayerIds);
+        long version = bumpStateVersion(grace.roomId());
+        log.info("[DISCONNECT] action=continueVote roomId={} gameId={} voter={} approvals={} eligible={} unanimous={} version={}",
+                grace.roomId(), gameId, userId, grace.approvedPlayerIds().size(), eligiblePlayerIds.size(), unanimous, version);
+
+        if (unanimous) {
+            removeDisconnectedPlayer(grace, "UNANIMOUS_CONTINUE");
+            return operationAck(grace.roomId(), gameId, getCurrentStateVersion(grace.roomId(), game), "UNANIMOUS_CONTINUE");
+        }
+
+        broadcastDisconnectGrace(game, "CONTINUE_VOTE_UPDATED",
+                voter.getUsername() + " voted to continue without " + grace.disconnectedPlayerName() + ".");
+        return operationAck(grace.roomId(), gameId, getCurrentStateVersion(grace.roomId(), game), "CONTINUE_VOTE_UPDATED");
+    }
+
+    private void removeDisconnectedPlayer(DisconnectGrace expectedGrace, String reason) {
+        DisconnectGrace grace = disconnectGraceByRoom.get(expectedGrace.roomId());
+        if (grace != expectedGrace) {
+            return;
+        }
+        Game game = gameRepository.findById(grace.gameId()).orElse(null);
+        if (game == null || game.getRoom() == null) {
+            disconnectGraceByRoom.remove(grace.roomId(), grace);
+            return;
+        }
+
+        List<GamePlayer> players = new ArrayList<>(gamePlayerRepository.findByGameOrderBySeatIndexAsc(game));
+        GamePlayer disconnectedPlayer = players.stream()
+                .filter(player -> grace.disconnectedPlayerId().equals(player.getUser().getId()))
+                .findFirst()
+                .orElse(null);
+        if (disconnectedPlayer == null) {
+            disconnectGraceByRoom.remove(grace.roomId(), grace);
+            return;
+        }
+
+        Long nextTurn = game.getCurrentTurn();
+        int disconnectedIndex = players.indexOf(disconnectedPlayer);
+        if (grace.disconnectedPlayerId().equals(game.getCurrentTurn()) && players.size() > 1) {
+            int nextIndex = nextSeatIndex(disconnectedIndex, players.size(), game.isClockwise(), 1);
+            nextTurn = players.get(nextIndex).getUser().getId();
+        }
+
+        disconnectGraceByRoom.remove(grace.roomId(), grace);
+        gamePlayerRepository.delete(disconnectedPlayer);
+        players.remove(disconnectedPlayer);
+
+        Room room = game.getRoom();
+        if (players.isEmpty()) {
+            long version = bumpStateVersion(grace.roomId());
+            log.info("[DISCONNECT] action=lastPlayerRemoved roomId={} gameId={} reason={} version={}",
+                    grace.roomId(), grace.gameId(), reason, version);
+            wsService.broadcastRoomDeleted(grace.roomId(), grace.gameId(),
+                    grace.disconnectedPlayerName() + " disconnected and the room was closed.");
+            gameRepository.delete(game);
+            roomRepository.delete(room);
+            return;
+        }
+
+        reseatPlayers(players);
+        if (room.getHost() != null && grace.disconnectedPlayerId().equals(room.getHost().getId())) {
+            room.setHost(players.get(0).getUser());
+        }
+        room.setStatus(RoomStatus.PLAYING);
+        roomRepository.save(room);
+        if (grace.disconnectedPlayerId().equals(game.getCurrentTurn())) {
+            game.setCurrentTurn(nextTurn);
+        }
+        gameRepository.save(game);
+        long version = bumpStateVersion(grace.roomId());
+        log.info("[DISCONNECT] action=playerRemoved roomId={} gameId={} userId={} reason={} nextTurn={} version={}",
+                grace.roomId(), grace.gameId(), grace.disconnectedPlayerId(), reason, game.getCurrentTurn(), version);
+
+        String message = grace.disconnectedPlayerName() + " did not return. Game resumed without that player.";
+        Map<String, Object> roomState = getRoomStateWithVersion(room, game);
+        wsService.broadcastRoomState(roomState, "PLAYER_LEFT", message);
+        wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", message);
+        wsService.broadcastPublicGamePatch(buildPublicGamePatch(
+                game, players, "PLAYER_REMOVED", grace.disconnectedPlayerId(), grace.disconnectedPlayerName(), message));
+    }
+
+    private void broadcastDisconnectGrace(Game game, String event, String message) {
+        List<GamePlayer> players = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        wsService.broadcastPublicGamePatch(buildPublicGamePatch(
+                game, players, event, null, null, message));
+    }
+
+    private List<Long> eligibleContinuePlayerIds(DisconnectGrace grace, List<GamePlayer> players) {
+        return players.stream()
+                .filter(player -> !grace.disconnectedPlayerId().equals(player.getUser().getId()))
+                .filter(player -> connectedUsernames.contains(player.getUser().getUsername()))
+                .map(player -> player.getUser().getId())
+                .toList();
+    }
+
+    private void ensureGameNotPaused(Game game) {
+        if (game != null && game.getRoom() != null && disconnectGraceByRoom.containsKey(game.getRoom().getId())) {
+            throw new IllegalArgumentException("Game is paused while waiting for a disconnected player");
         }
     }
 
@@ -375,6 +629,7 @@ public class GameService {
         if (game.getStatus() != GameStatus.PLAYING) {
             throw new IllegalArgumentException("Game is not in playing state");
         }
+        ensureGameNotPaused(game);
         if (!userId.equals(game.getCurrentTurn())) {
             logUnoPlay(userId, null, getTopDiscard(game), game.getCurrentColor(), game.getPendingDrawCount(), false, false,
                     "not current player", game.getCurrentTurn());
@@ -495,6 +750,7 @@ public class GameService {
         if (game.getStatus() != GameStatus.PLAYING) {
             throw new IllegalArgumentException("Game is not in playing state");
         }
+        ensureGameNotPaused(game);
         if (!userId.equals(game.getCurrentTurn())) {
             throw new IllegalArgumentException("It is not your turn to draw");
         }
@@ -552,6 +808,7 @@ public class GameService {
         if (game.getStatus() != GameStatus.PLAYING) {
             throw new IllegalArgumentException("Game is not in playing state");
         }
+        ensureGameNotPaused(game);
         if (!userId.equals(game.getCurrentTurn())) {
             throw new IllegalArgumentException("It is not your turn");
         }
@@ -661,6 +918,7 @@ public class GameService {
     }
 
     private Map<String, Object> doLeaveRoom(Long roomId, Long userId) {
+        disconnectGraceByRoom.remove(roomId);
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new IllegalArgumentException("Room not found"));
         User user = userRepository.findById(userId)
@@ -1459,6 +1717,14 @@ public class GameService {
                         player.isRematchReady()
                 ));
             }
+            DisconnectGrace grace = disconnectGraceByRoom.get(game.getRoom().getId());
+            boolean graceActive = grace != null && grace.gameId().equals(game.getId());
+            List<Long> approvedPlayerIds = graceActive
+                    ? grace.approvedPlayerIds().stream().sorted().toList()
+                    : List.of();
+            List<Long> eligiblePlayerIds = graceActive
+                    ? eligibleContinuePlayerIds(grace, players)
+                    : List.of();
             return new PublicGamePatch(
                     type,
                     game.getRoom().getId(),
@@ -1483,6 +1749,13 @@ public class GameService {
                     publicPlayers,
                     winnerId,
                     rematchReadyPlayerIds,
+                    graceActive,
+                    graceActive ? grace.disconnectedPlayerId() : null,
+                    graceActive ? grace.disconnectedPlayerName() : null,
+                    graceActive ? grace.deadlineEpochMs() : null,
+                    graceActive ? remainingGraceSeconds(grace) : 0L,
+                    approvedPlayerIds,
+                    eligiblePlayerIds,
                     message,
                     false
             );
@@ -1494,6 +1767,29 @@ public class GameService {
                     type,
                     costMs);
         }
+    }
+
+    private void appendDisconnectGraceState(Map<String, Object> state,
+                                            Long roomId,
+                                            List<GamePlayer> players) {
+        DisconnectGrace grace = disconnectGraceByRoom.get(roomId);
+        boolean active = grace != null;
+        state.put("disconnectGraceActive", active);
+        state.put("disconnectedPlayerId", active ? grace.disconnectedPlayerId() : null);
+        state.put("disconnectedPlayerName", active ? grace.disconnectedPlayerName() : null);
+        state.put("disconnectGraceDeadline", active ? grace.deadlineEpochMs() : null);
+        state.put("disconnectGraceRemainingSeconds", active ? remainingGraceSeconds(grace) : 0L);
+        state.put("continueApprovedPlayerIds", active
+                ? grace.approvedPlayerIds().stream().sorted().toList()
+                : List.of());
+        state.put("eligibleContinuePlayerIds", active
+                ? eligibleContinuePlayerIds(grace, players)
+                : List.of());
+    }
+
+    private long remainingGraceSeconds(DisconnectGrace grace) {
+        long remainingMs = Math.max(0L, grace.deadlineEpochMs() - System.currentTimeMillis());
+        return (remainingMs + 999L) / 1000L;
     }
 
     private void sendPrivateHandPatch(Game game, GamePlayer player, String type) {
