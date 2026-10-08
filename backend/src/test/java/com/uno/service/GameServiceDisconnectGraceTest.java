@@ -74,6 +74,31 @@ class GameServiceDisconnectGraceTest {
     }
 
     @Test
+    void anotherConnectedAccountCannotClaimDisconnectedPlayersGrace() {
+        Fixture fixture = fixture();
+        fixture.service.playerDisconnected("bob", System.currentTimeMillis());
+
+        fixture.service.playerConnected("alice");
+
+        assertTrue(fixture.service.hasActiveDisconnectGrace(fixture.room.getId()));
+        verify(fixture.playerRepository, never()).delete(any(GamePlayer.class));
+        assertEquals("PLAYER_DISCONNECTED", lastPatch(fixture.wsService).type());
+    }
+
+    @Test
+    void reconnectAtGraceDeadlineDoesNotBypassTimeoutRemoval() {
+        Fixture fixture = fixture();
+        long disconnectedAt = System.currentTimeMillis();
+        fixture.service.playerDisconnected("bob", disconnectedAt);
+
+        fixture.service.playerConnected("bob", disconnectedAt + GameService.DISCONNECT_GRACE_PERIOD_MS);
+
+        assertFalse(fixture.service.hasActiveDisconnectGrace(fixture.room.getId()));
+        verify(fixture.playerRepository).delete(fixture.bobPlayer);
+        assertEquals("PLAYER_REMOVED", lastPatch(fixture.wsService).type());
+    }
+
+    @Test
     void timeoutRemovesDisconnectedPlayerAndRemainingPlayersCanContinue() {
         Fixture fixture = fixture();
         fixture.game.setCurrentTurn(fixture.bob.getId());
@@ -161,7 +186,9 @@ class GameServiceDisconnectGraceTest {
         List<GamePlayer> players = new ArrayList<>(List.of(alicePlayer, bobPlayer, charliePlayer));
 
         when(gameRepository.findById(game.getId())).thenReturn(Optional.of(game));
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(alice));
         when(userRepository.findByUsername("bob")).thenReturn(Optional.of(bob));
+        when(userRepository.findByUsername("charlie")).thenReturn(Optional.of(charlie));
         when(userRepository.getReferenceById(alice.getId())).thenReturn(alice);
         when(userRepository.getReferenceById(charlie.getId())).thenReturn(charlie);
         when(playerRepository.findByUser(bob)).thenReturn(List.of(bobPlayer));

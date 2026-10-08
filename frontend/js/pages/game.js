@@ -1575,7 +1575,7 @@ createApp({
                     if (gameId.value) subscribeGameChannels(gameId.value);
                     addLog(t("connected"));
                     if (resyncOnConnect) {
-                        await refreshFromServer({ reason: "ws-connected" });
+                        await joinAndLoad();
                     }
                     resolveOnce(true);
                 };

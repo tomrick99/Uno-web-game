@@ -31,6 +31,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -300,6 +301,74 @@ class GameServiceMultiplayerIntegrationTest {
         assertEquals(3, penaltyPatch.players().get(0).handCount());
     }
 
+    @Test
+    void reconnectRestoresExistingPlayerAndCompleteGameStateWithoutDuplicateRecord() {
+        Fixture fixture = createGame(List.of(
+                List.of(number(CardColor.RED, 1), number(CardColor.BLUE, 1)),
+                List.of(number(CardColor.YELLOW, 2), number(CardColor.GREEN, 2)),
+                List.of(number(CardColor.BLUE, 3), number(CardColor.YELLOW, 3))
+        ), drawPile(12));
+        Game gameBefore = gameRepository.findById(fixture.gameId()).orElseThrow();
+        User bob = userRepository.findById(fixture.userId(1)).orElseThrow();
+        GamePlayer bobBefore = gamePlayerRepository.findByGameAndUser(gameBefore, bob).orElseThrow();
+        Long originalPlayerRecordId = bobBefore.getId();
+        int originalSeat = bobBefore.getSeatIndex();
+        List<Card> originalHand = bobBefore.getHandCards();
+        String originalHandJson = bobBefore.getHandCardsJson();
+        Long originalTurn = gameBefore.getCurrentTurn();
+        String originalDrawPile = gameBefore.getDrawPileJson();
+        String originalDiscardPile = gameBefore.getDiscardPileJson();
+        CardColor originalColor = gameBefore.getCurrentColor();
+        boolean originalDirection = gameBefore.isClockwise();
+
+        gameService.playerDisconnected(bob.getUsername(), System.currentTimeMillis());
+        assertTrue(gameService.hasActiveDisconnectGrace(fixture.roomId()));
+
+        Map<String, Object> reconnectSnapshot = gameService.joinGame(fixture.roomId(), bob.getId());
+
+        assertFalse(gameService.hasActiveDisconnectGrace(fixture.roomId()));
+        Game restoredGame = gameRepository.findById(fixture.gameId()).orElseThrow();
+        List<GamePlayer> restoredPlayers = gamePlayerRepository.findByGameOrderBySeatIndexAsc(restoredGame);
+        GamePlayer restoredBob = gamePlayerRepository.findByGameAndUser(restoredGame, bob).orElseThrow();
+        assertEquals(3, restoredPlayers.size());
+        assertEquals(originalPlayerRecordId, restoredBob.getId());
+        assertEquals(originalSeat, restoredBob.getSeatIndex());
+        assertEquals(originalHandJson, restoredBob.getHandCardsJson());
+        assertEquals(originalHand.stream().map(this::cardSignature).toList(),
+                restoredBob.getHandCards().stream().map(this::cardSignature).toList());
+        assertEquals(originalTurn, restoredGame.getCurrentTurn());
+        assertEquals(originalDrawPile, restoredGame.getDrawPileJson());
+        assertEquals(originalDiscardPile, restoredGame.getDiscardPileJson());
+        assertEquals(originalColor, restoredGame.getCurrentColor());
+        assertEquals(originalDirection, restoredGame.isClockwise());
+        assertEquals(GameStatus.PLAYING, restoredGame.getStatus());
+        assertEquals(RoomStatus.PLAYING, restoredGame.getRoom().getStatus());
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> gameState = (Map<String, Object>) reconnectSnapshot.get("gameState");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> snapshotPlayers = (List<Map<String, Object>>) gameState.get("players");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> restoredHand = (List<Map<String, Object>>) reconnectSnapshot.get("handCards");
+        assertEquals(fixture.gameId(), gameState.get("gameId"));
+        assertEquals(originalTurn, gameState.get("currentTurn"));
+        assertEquals(false, gameState.get("disconnectGraceActive"));
+        assertNull(gameState.get("disconnectedPlayerId"));
+        assertNull(gameState.get("disconnectGraceDeadline"));
+        assertEquals(List.of(0, 1, 2), snapshotPlayers.stream().map(player -> player.get("seatIndex")).toList());
+        assertEquals(List.of(fixture.userId(0), fixture.userId(1), fixture.userId(2)),
+                snapshotPlayers.stream().map(player -> player.get("userId")).toList());
+        assertEquals(originalHand.size(), restoredHand.size());
+        assertEquals("PLAYER_RECONNECTED", lastPublicPatch().type());
+        assertFalse(lastPublicPatch().disconnectGraceActive());
+        assertEquals("HAND_RESTORED", privateHandPatches.get(privateHandPatches.size() - 1).type());
+        assertEquals(bob.getId(), privateHandPatches.get(privateHandPatches.size() - 1).userId());
+        assertEquals(originalHand.size(), privateHandPatches.get(privateHandPatches.size() - 1).handCards().size());
+
+        gameService.playCard(fixture.gameId(), fixture.userId(0), 0, null);
+        assertEquals(fixture.userId(1), gameRepository.findById(fixture.gameId()).orElseThrow().getCurrentTurn());
+    }
+
     private long assertPatch(PublicGamePatch patch,
                              Fixture fixture,
                              int expectedCurrentPlayer,
@@ -394,7 +463,7 @@ class GameServiceMultiplayerIntegrationTest {
         publicPatches.clear();
         privateHandPatches.clear();
         clearInvocations(wsService);
-        return new Fixture(game.getId(), users.stream().map(User::getId).toList());
+        return new Fixture(room.getId(), game.getId(), users.stream().map(User::getId).toList());
     }
 
     private String toJson(List<Card> cards) {
@@ -422,7 +491,11 @@ class GameServiceMultiplayerIntegrationTest {
         return new Card(color, type, 20);
     }
 
-    private record Fixture(Long gameId, List<Long> userIds) {
+    private String cardSignature(Card card) {
+        return card.color() + ":" + card.type() + ":" + card.value();
+    }
+
+    private record Fixture(Long roomId, Long gameId, List<Long> userIds) {
         private Long userId(int index) {
             return userIds.get(index);
         }

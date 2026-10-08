@@ -149,15 +149,26 @@ public class GameService {
     }
 
     public void playerConnected(String username) {
+        playerConnected(username, System.currentTimeMillis());
+    }
+
+    void playerConnected(String username, long connectedAtEpochMs) {
         if (username == null || username.isBlank()) {
+            return;
+        }
+        User user = userRepository.findByUsername(username).orElse(null);
+        if (user == null) {
             return;
         }
         connectedUsernames.add(username);
         disconnectGraceByRoom.values().stream()
-                .filter(grace -> username.equals(grace.disconnectedPlayerName()))
+                .filter(grace -> user.getId().equals(grace.disconnectedPlayerId()))
                 .toList()
                 .forEach(grace -> withRoomLock(grace.roomId(), () -> {
-                    resumeAfterReconnect(grace);
+                    boolean resumed = resumeAfterReconnect(grace, user.getId(), connectedAtEpochMs);
+                    if (!resumed && connectedAtEpochMs >= grace.deadlineEpochMs()) {
+                        removeDisconnectedPlayer(grace, "DISCONNECT_TIMEOUT");
+                    }
                     return null;
                 }));
     }
@@ -414,23 +425,50 @@ public class GameService {
                 player.getUser().getUsername() + " disconnected. Waiting up to 60 seconds.");
     }
 
-    private void resumeAfterReconnect(DisconnectGrace expectedGrace) {
+    private boolean resumeAfterReconnect(DisconnectGrace expectedGrace,
+                                         Long reconnectingUserId,
+                                         long connectedAtEpochMs) {
         DisconnectGrace current = disconnectGraceByRoom.get(expectedGrace.roomId());
-        if (current != expectedGrace) {
-            return;
+        if (current != expectedGrace || !current.disconnectedPlayerId().equals(reconnectingUserId)) {
+            return false;
+        }
+        if (connectedAtEpochMs >= current.deadlineEpochMs()) {
+            return false;
         }
         Game game = gameRepository.findById(current.gameId()).orElse(null);
         if (game == null || game.getStatus() != GameStatus.PLAYING) {
             disconnectGraceByRoom.remove(current.roomId(), current);
-            return;
+            return false;
+        }
+
+        GamePlayer reconnectingPlayer = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game).stream()
+                .filter(player -> reconnectingUserId.equals(player.getUser().getId()))
+                .findFirst()
+                .orElse(null);
+        if (reconnectingPlayer == null) {
+            disconnectGraceByRoom.remove(current.roomId(), current);
+            return false;
         }
 
         disconnectGraceByRoom.remove(current.roomId(), current);
         long version = bumpStateVersion(current.roomId());
         log.info("[DISCONNECT] action=playerReconnected roomId={} gameId={} userId={} version={}",
                 current.roomId(), current.gameId(), current.disconnectedPlayerId(), version);
-        broadcastDisconnectGrace(game, "PLAYER_RECONNECTED",
-                current.disconnectedPlayerName() + " reconnected. Game resumed.");
+        PublicGamePatch publicPatch = buildPublicGamePatch(
+                game,
+                gamePlayerRepository.findByGameOrderBySeatIndexAsc(game),
+                "PLAYER_RECONNECTED",
+                current.disconnectedPlayerId(),
+                current.disconnectedPlayerName(),
+                current.disconnectedPlayerName() + " reconnected. Game resumed."
+        );
+        PrivateHandPatchDelivery privateHandPatch = buildPrivateHandPatchDelivery(
+                game, reconnectingPlayer, "HAND_RESTORED");
+        publishAfterCommit("playerReconnect", () -> {
+            wsService.broadcastPublicGamePatch(publicPatch);
+            sendPrivateHandPatch(privateHandPatch);
+        });
+        return true;
     }
 
     private Map<String, Object> doContinueWithoutDisconnectedPlayer(Long gameId, Long userId) {
@@ -595,6 +633,17 @@ public class GameService {
             boolean initialHostJoin = playerCount == 0 && room.getHost().getId().equals(user.getId());
             if (!initialHostJoin) {
                 wsService.sendLobbyActivityNotification(roomState, "PLAYER_JOINED", user);
+            }
+        } else {
+            DisconnectGrace grace = disconnectGraceByRoom.get(roomId);
+            if (grace != null && grace.gameId().equals(game.getId())) {
+                long connectedAtEpochMs = System.currentTimeMillis();
+                boolean resumed = resumeAfterReconnect(grace, user.getId(), connectedAtEpochMs);
+                if (!resumed
+                        && grace.disconnectedPlayerId().equals(user.getId())
+                        && connectedAtEpochMs >= grace.deadlineEpochMs()) {
+                    throw new IllegalArgumentException("Disconnect grace period has expired");
+                }
             }
         }
 
