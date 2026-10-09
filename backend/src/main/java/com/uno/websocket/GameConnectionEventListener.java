@@ -1,6 +1,9 @@
 package com.uno.websocket;
 
+import com.uno.auth.ActiveLoginService;
+import com.uno.auth.LoginSessionReplacedEvent;
 import com.uno.service.GameService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
@@ -8,6 +11,7 @@ import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.messaging.SessionConnectedEvent;
+import org.springframework.web.socket.messaging.SessionConnectEvent;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 import org.springframework.web.socket.messaging.SessionSubscribeEvent;
 
@@ -29,34 +33,67 @@ public class GameConnectionEventListener {
 
     private final GameService gameService;
     private final TaskScheduler taskScheduler;
+    private final GameWebSocketService webSocketService;
+    private final ActiveWebSocketSessionRegistry activeSessionRegistry;
     private final Map<String, String> usernameBySession = new ConcurrentHashMap<>();
     private final Set<String> gameSessionIds = ConcurrentHashMap.newKeySet();
     private final Map<String, AtomicInteger> sessionCountByUsername = new ConcurrentHashMap<>();
     private final Map<String, AtomicLong> connectionVersionByUsername = new ConcurrentHashMap<>();
 
-    public GameConnectionEventListener(GameService gameService, TaskScheduler taskScheduler) {
+    @Autowired
+    public GameConnectionEventListener(GameService gameService,
+                                       TaskScheduler taskScheduler,
+                                       GameWebSocketService webSocketService,
+                                       ActiveWebSocketSessionRegistry activeSessionRegistry) {
         this.gameService = gameService;
         this.taskScheduler = taskScheduler;
+        this.webSocketService = webSocketService;
+        this.activeSessionRegistry = activeSessionRegistry;
+    }
+
+    // Kept for focused connection-count tests.
+    GameConnectionEventListener(GameService gameService, TaskScheduler taskScheduler) {
+        this(gameService, taskScheduler, null, null);
+    }
+
+    @EventListener
+    public void onConnecting(SessionConnectEvent event) {
+        registerFromMessage(event.getMessage());
     }
 
     @EventListener
     public void onConnected(SessionConnectedEvent event) {
-        StompHeaderAccessor accessor = StompHeaderAccessor.wrap(event.getMessage());
+        registerFromMessage(event.getMessage());
+    }
+
+    private void registerFromMessage(org.springframework.messaging.Message<byte[]> message) {
+        StompHeaderAccessor accessor = StompHeaderAccessor.wrap(message);
         Principal principal = accessor.getUser();
         String sessionId = accessor.getSessionId();
         if (principal == null || sessionId == null) {
             return;
         }
 
-        registerConnectedSession(sessionId, principal.getName());
+        Map<String, Object> attributes = accessor.getSessionAttributes();
+        Long userId = attributes != null && attributes.get("userId") instanceof Long value ? value : null;
+        Object tokenValue = attributes != null ? attributes.get(ActiveLoginService.LOGIN_TOKEN_ATTRIBUTE) : null;
+        String loginToken = tokenValue instanceof String value ? value : null;
+        registerConnectedSession(sessionId, principal.getName(), userId, loginToken);
     }
 
     void registerConnectedSession(String sessionId, String username) {
+        registerConnectedSession(sessionId, username, null, null);
+    }
+
+    void registerConnectedSession(String sessionId, String username, Long userId, String loginToken) {
         if (sessionId == null || username == null || username.isBlank()) {
             return;
         }
         if (usernameBySession.putIfAbsent(sessionId, username) != null) {
             return;
+        }
+        if (activeSessionRegistry != null) {
+            activeSessionRegistry.register(sessionId, username, userId, loginToken);
         }
         log.info("[WS] tracked session user={} sessionId={}", username, sessionId);
     }
@@ -97,11 +134,26 @@ public class GameConnectionEventListener {
         registerDisconnectedSession(event.getSessionId());
     }
 
+    @EventListener
+    public void onLoginSessionReplaced(LoginSessionReplacedEvent event) {
+        if (activeSessionRegistry == null || webSocketService == null) {
+            return;
+        }
+        for (ActiveWebSocketSessionRegistry.Connection connection
+                : activeSessionRegistry.findByLoginToken(event.replacedLoginToken())) {
+            webSocketService.sendSessionReplaced(connection.username(), connection.sessionId());
+            registerDisconnectedSession(connection.sessionId());
+        }
+    }
+
     void registerDisconnectedSession(String sessionId) {
         if (sessionId == null) {
             return;
         }
         String username = usernameBySession.remove(sessionId);
+        if (activeSessionRegistry != null) {
+            activeSessionRegistry.remove(sessionId);
+        }
         if (username == null) {
             return;
         }

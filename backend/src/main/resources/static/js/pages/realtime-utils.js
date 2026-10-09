@@ -6,6 +6,16 @@
     global.UnoRealtimeUtils = api;
 })(typeof window !== "undefined" ? window : globalThis, function () {
     const DEFAULT_FALLBACK_THRESHOLD_MS = 10000;
+    const SESSION_REPLACED_MESSAGE = "This account was signed in on another device. You have been signed out.";
+
+    function isSessionReplacedPayload(payload) {
+        if (!payload || typeof payload !== "object") {
+            return false;
+        }
+        return payload.type === "SESSION_REPLACED"
+            || payload.event === "SESSION_REPLACED"
+            || (Number(payload.code) === 401 && payload.message === SESSION_REPLACED_MESSAGE);
+    }
 
     function shouldEnableFallbackPolling(disconnectedAt, now, thresholdMs = DEFAULT_FALLBACK_THRESHOLD_MS) {
         if (!disconnectedAt || !now) {
@@ -120,6 +130,8 @@
 
     return {
         DEFAULT_FALLBACK_THRESHOLD_MS,
+        SESSION_REPLACED_MESSAGE,
+        isSessionReplacedPayload,
         shouldEnableFallbackPolling,
         resolveConnectionMode,
         mergeRealtimeBatch,

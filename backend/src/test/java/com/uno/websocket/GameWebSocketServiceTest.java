@@ -264,6 +264,22 @@ class GameWebSocketServiceTest {
         assertFalse(payload.containsKey("handCards"));
     }
 
+    @Test
+    void replacementNoticeTargetsOnlyTheReplacedWebSocketSession() {
+        RecordingTemplate template = new RecordingTemplate();
+        GameWebSocketService service = new GameWebSocketService(template);
+
+        service.sendSessionReplaced("alice", "ws-device-a");
+
+        assertEquals("alice", template.user);
+        assertEquals("/queue/session-status", template.userDestination);
+        assertEquals("ws-device-a", template.userHeaders.get("simpSessionId"));
+        Map<?, ?> payload = (Map<?, ?>) template.userPayload;
+        assertEquals("SESSION_REPLACED", payload.get("type"));
+        assertEquals("This account was signed in on another device. You have been signed out.",
+                payload.get("message"));
+    }
+
     private String findRecordComponent(Object record, String name) {
         return java.util.Arrays.stream(record.getClass().getRecordComponents())
                 .map(component -> component.getName().equals(name) ? component.getName() : null)
@@ -297,6 +313,7 @@ class GameWebSocketServiceTest {
         private String user;
         private String userDestination;
         private Object userPayload;
+        private Map<String, Object> userHeaders;
         private final List<String> users = new ArrayList<>();
         private final List<String> userDestinations = new ArrayList<>();
         private final List<Object> userPayloads = new ArrayList<>();
@@ -316,6 +333,20 @@ class GameWebSocketServiceTest {
             this.user = user;
             this.userDestination = destination;
             this.userPayload = payload;
+            this.users.add(user);
+            this.userDestinations.add(destination);
+            this.userPayloads.add(payload);
+        }
+
+        @Override
+        public void convertAndSendToUser(String user,
+                                         String destination,
+                                         Object payload,
+                                         Map<String, Object> headers) {
+            this.user = user;
+            this.userDestination = destination;
+            this.userPayload = payload;
+            this.userHeaders = headers;
             this.users.add(user);
             this.userDestinations.add(destination);
             this.userPayloads.add(payload);

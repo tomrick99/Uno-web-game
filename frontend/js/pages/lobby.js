@@ -21,6 +21,7 @@ createApp({
         const stompClient = ref(null);
         const lobbySubscription = ref(null);
         const lobbyActivitySubscription = ref(null);
+        const sessionStatusSubscription = ref(null);
 
         let reconnectTimer = null;
         let fallbackActivationTimer = null;
@@ -29,6 +30,8 @@ createApp({
         let disconnectedAt = null;
         let isConnecting = false;
         let shouldReconnect = true;
+        let signedOutByReplacement = false;
+        let responseInterceptorId = null;
 
         const messages = {
             zh: {
@@ -199,6 +202,10 @@ createApp({
                 lobbyActivitySubscription.value.unsubscribe();
                 lobbyActivitySubscription.value = null;
             }
+            if (sessionStatusSubscription.value) {
+                sessionStatusSubscription.value.unsubscribe();
+                sessionStatusSubscription.value = null;
+            }
             if (stompClient.value) {
                 try {
                     if (typeof stompClient.value.deactivate === "function") {
@@ -213,6 +220,28 @@ createApp({
             }
             isConnecting = false;
         };
+
+        const handleSessionReplaced = (payload = {}) => {
+            if (signedOutByReplacement) return;
+            signedOutByReplacement = true;
+            shouldReconnect = false;
+            const message = payload.message
+                || realtimeUtils.SESSION_REPLACED_MESSAGE
+                || "This account was signed in on another device. You have been signed out.";
+            cleanupSocket();
+            stopFallbackPolling();
+            clearReconnectTimer();
+            clearFallbackActivationTimer();
+            localStorage.removeItem("userId");
+            localStorage.removeItem("username");
+            sessionStorage.setItem("loginNotice", message);
+            window.alert(message);
+            window.location.replace("index.html");
+        };
+
+        const isSessionReplaced = (payload) => typeof realtimeUtils.isSessionReplacedPayload === "function"
+            ? realtimeUtils.isSessionReplacedPayload(payload)
+            : payload?.type === "SESSION_REPLACED";
 
         const subscribeLobbyTopic = () => {
             if (!stompClient.value || !wsConnected.value) return;
@@ -253,6 +282,12 @@ createApp({
                     } catch (error) {
                         console.error(error);
                     }
+                });
+            }
+            if (!sessionStatusSubscription.value) {
+                sessionStatusSubscription.value = stompClient.value.subscribe("/user/queue/session-status", (message) => {
+                    const payload = JSON.parse(message.body || "{}");
+                    if (isSessionReplaced(payload)) handleSessionReplaced(payload);
                 });
             }
         };
@@ -472,6 +507,10 @@ createApp({
 
         onMounted(async () => {
             console.info("[UNO-LOBBY] lobby.js loaded");
+            responseInterceptorId = axios.interceptors.response.use((response) => response, (error) => {
+                if (isSessionReplaced(error.response?.data)) handleSessionReplaced(error.response.data);
+                return Promise.reject(error);
+            });
             applyLanguage();
             const loggedIn = await checkLogin();
             if (!loggedIn) return;
@@ -491,6 +530,7 @@ createApp({
                 clearTimeout(refreshDebounceTimer);
                 refreshDebounceTimer = null;
             }
+            if (responseInterceptorId !== null) axios.interceptors.response.eject(responseInterceptorId);
         });
 
         return {

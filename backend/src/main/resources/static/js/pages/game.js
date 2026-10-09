@@ -72,6 +72,7 @@ createApp({
         const roomSubscription = ref(null);
         const gameSubscription = ref(null);
         const handSubscription = ref(null);
+        const sessionStatusSubscription = ref(null);
         const subscribedGameId = ref(null);
 
         let reconnectTimer = null;
@@ -83,6 +84,8 @@ createApp({
         let disconnectedAt = null;
         let wsConnectInFlight = false;
         let shouldReconnect = true;
+        let signedOutByReplacement = false;
+        let responseInterceptorId = null;
         let pendingRealtimeBatch = null;
         let pendingRealtimeBatchTimer = null;
         let gameStartConsistencyTimer = null;
@@ -814,7 +817,7 @@ createApp({
             }
             pendingRealtimeBatch = null;
             lastGameStartConsistencyKey = null;
-            for (const subscription of [roomSubscription, gameSubscription, handSubscription]) {
+            for (const subscription of [roomSubscription, gameSubscription, handSubscription, sessionStatusSubscription]) {
                 if (subscription.value) {
                     subscription.value.unsubscribe();
                     subscription.value = null;
@@ -833,6 +836,25 @@ createApp({
                 }
                 stompClient.value = null;
             }
+        };
+
+        const isSessionReplaced = (payload) => typeof realtimeUtils.isSessionReplacedPayload === "function"
+            ? realtimeUtils.isSessionReplacedPayload(payload)
+            : payload?.type === "SESSION_REPLACED";
+
+        const handleSessionReplaced = (payload = {}) => {
+            if (signedOutByReplacement) return;
+            signedOutByReplacement = true;
+            shouldReconnect = false;
+            const message = payload.message
+                || realtimeUtils.SESSION_REPLACED_MESSAGE
+                || "This account was signed in on another device. You have been signed out.";
+            cleanupRealtime();
+            localStorage.removeItem("userId");
+            localStorage.removeItem("username");
+            sessionStorage.setItem("loginNotice", message);
+            window.alert(message);
+            window.location.replace("index.html");
         };
 
         const applyRoomConfig = (state) => {
@@ -1425,7 +1447,7 @@ createApp({
         };
 
         const resetSubscriptions = () => {
-            for (const subscription of [roomSubscription, gameSubscription, handSubscription]) {
+            for (const subscription of [roomSubscription, gameSubscription, handSubscription, sessionStatusSubscription]) {
                 if (subscription.value) {
                     try {
                         subscription.value.unsubscribe();
@@ -1436,6 +1458,14 @@ createApp({
                 }
             }
             subscribedGameId.value = null;
+        };
+
+        const subscribeSessionStatus = () => {
+            if (!stompClient.value || !wsConnected.value || sessionStatusSubscription.value) return;
+            sessionStatusSubscription.value = stompClient.value.subscribe("/user/queue/session-status", (message) => {
+                const payload = JSON.parse(message.body || "{}");
+                if (isSessionReplaced(payload)) handleSessionReplaced(payload);
+            });
         };
 
         const subscribeRoomTopic = () => {
@@ -1571,6 +1601,7 @@ createApp({
                     updateConnectionMode();
                     resetSubscriptions();
                     console.info("[UNO-GAME] ws connected");
+                    subscribeSessionStatus();
                     subscribeRoomTopic();
                     if (gameId.value) subscribeGameChannels(gameId.value);
                     addLog(t("connected"));
@@ -1835,6 +1866,10 @@ createApp({
             console.info("[UNO-GAME] roomId from URL =", roomId.value);
             console.info("[UNO-GAME] websocket endpoint =", websocketEndpoint);
             applyLanguage();
+            responseInterceptorId = axios.interceptors.response.use((response) => response, (error) => {
+                if (isSessionReplaced(error.response?.data)) handleSessionReplaced(error.response.data);
+                return Promise.reject(error);
+            });
             try {
                 const response = await axios.get(`${apiBase}/user/me`);
                 if (response.data.code !== 200) {
@@ -1886,6 +1921,7 @@ createApp({
             }
             if (beforeUnloadHandler) window.removeEventListener("beforeunload", beforeUnloadHandler);
             if (delegatedButtonHandler) document.removeEventListener("click", delegatedButtonHandler);
+            if (responseInterceptorId !== null) axios.interceptors.response.eject(responseInterceptorId);
         });
 
         return {

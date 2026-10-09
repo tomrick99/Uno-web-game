@@ -1,5 +1,6 @@
 package com.uno.config;
 
+import com.uno.auth.ActiveLoginChannelInterceptor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,6 +35,12 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Value("${spring.websocket.allowed-origin-patterns:http://localhost:*,http://127.0.0.1:*}")
     private String[] allowedOriginPatterns;
+
+    private final ActiveLoginChannelInterceptor activeLoginChannelInterceptor;
+
+    public WebSocketConfig(ActiveLoginChannelInterceptor activeLoginChannelInterceptor) {
+        this.activeLoginChannelInterceptor = activeLoginChannelInterceptor;
+    }
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
@@ -97,7 +104,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void configureClientInboundChannel(ChannelRegistration registration) {
-        registration.interceptors(new ChannelInterceptor() {
+        registration.interceptors(activeLoginChannelInterceptor, new ChannelInterceptor() {
             @Override
             public Message<?> preSend(Message<?> message, MessageChannel channel) {
                 StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);

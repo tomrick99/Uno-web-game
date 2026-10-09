@@ -1,5 +1,6 @@
 package com.uno.controller;
 
+import com.uno.auth.ActiveLoginService;
 import com.uno.dto.request.LoginRequest;
 import com.uno.dto.request.RegisterRequest;
 import com.uno.dto.response.ApiResponse;
@@ -13,9 +14,11 @@ import org.springframework.web.bind.annotation.*;
 public class UserController {
 
     private final UserService userService;
+    private final ActiveLoginService activeLoginService;
 
-    public UserController(UserService userService) {
+    public UserController(UserService userService, ActiveLoginService activeLoginService) {
         this.userService = userService;
+        this.activeLoginService = activeLoginService;
     }
 
     /**
@@ -40,8 +43,7 @@ public class UserController {
     public ApiResponse<User> login(@RequestBody LoginRequest request, HttpSession session) {
         return userService.login(request.getUsername(), request.getPassword())
                 .map(user -> {
-                    session.setAttribute("userId", user.getId());
-                    session.setAttribute("username", user.getUsername());
+                    activeLoginService.activate(user, session);
                     user.setPassword(null);
                     return ApiResponse.success("登录成功", user);
                 })
@@ -53,6 +55,7 @@ public class UserController {
      */
     @PostMapping("/logout")
     public ApiResponse<Void> logout(HttpSession session) {
+        activeLoginService.deactivate(session);
         session.invalidate();
         return ApiResponse.success("登出成功", null);
     }
@@ -62,6 +65,9 @@ public class UserController {
      */
     @GetMapping("/me")
     public ApiResponse<User> getCurrentUser(HttpSession session) {
+        if (activeLoginService.isReplaced(session)) {
+            return ApiResponse.error(401, ActiveLoginService.SESSION_REPLACED_MESSAGE);
+        }
         Long userId = (Long) session.getAttribute("userId");
         if (userId == null) {
             return ApiResponse.error(401, "未登录");

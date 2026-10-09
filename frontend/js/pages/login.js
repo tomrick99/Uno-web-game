@@ -7,6 +7,12 @@ createApp({
         const errorMsg = ref("");
         const successMsg = ref("");
 
+        const signedOutNotice = sessionStorage.getItem("loginNotice");
+        if (signedOutNotice) {
+            errorMsg.value = signedOutNotice;
+            sessionStorage.removeItem("loginNotice");
+        }
+
         const loginForm = reactive({ username: "", password: "" });
         const registerForm = reactive({ username: "", password: "" });
 

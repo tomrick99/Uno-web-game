@@ -1,5 +1,6 @@
 package com.uno.websocket;
 
+import com.uno.auth.ActiveLoginService;
 import com.uno.dto.realtime.PrivateHandPatch;
 import com.uno.dto.realtime.PublicGamePatch;
 import com.uno.entity.User;
@@ -9,6 +10,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
+import org.springframework.messaging.simp.SimpMessageType;
 import org.springframework.messaging.simp.user.SimpUserRegistry;
 import org.springframework.stereotype.Service;
 
@@ -26,16 +29,27 @@ public class GameWebSocketService {
     private final SimpUserRegistry userRegistry;
     private final UserRepository userRepository;
     private final GamePlayerRepository gamePlayerRepository;
+    private final ActiveWebSocketSessionRegistry activeSessionRegistry;
 
     @Autowired
     public GameWebSocketService(SimpMessagingTemplate messagingTemplate,
                                 SimpUserRegistry userRegistry,
                                 UserRepository userRepository,
-                                GamePlayerRepository gamePlayerRepository) {
+                                GamePlayerRepository gamePlayerRepository,
+                                ActiveWebSocketSessionRegistry activeSessionRegistry) {
         this.messagingTemplate = messagingTemplate;
         this.userRegistry = userRegistry;
         this.userRepository = userRepository;
         this.gamePlayerRepository = gamePlayerRepository;
+        this.activeSessionRegistry = activeSessionRegistry;
+    }
+
+    // Kept for focused unit tests that do not need active-session routing.
+    public GameWebSocketService(SimpMessagingTemplate messagingTemplate,
+                                SimpUserRegistry userRegistry,
+                                UserRepository userRepository,
+                                GamePlayerRepository gamePlayerRepository) {
+        this(messagingTemplate, userRegistry, userRepository, gamePlayerRepository, null);
     }
 
     // Kept for focused unit tests that only exercise room/game broadcasts.
@@ -44,6 +58,7 @@ public class GameWebSocketService {
         this.userRegistry = null;
         this.userRepository = null;
         this.gamePlayerRepository = null;
+        this.activeSessionRegistry = null;
     }
 
     public void broadcastRoomState(Map<String, Object> roomState, String event, String message) {
@@ -126,7 +141,7 @@ public class GameWebSocketService {
             if (recipient == null || gamePlayerRepository.existsByUser(recipient)) {
                 continue;
             }
-            timedSendToUser(recipient.getUsername(), LOBBY_ACTIVITY_QUEUE, payload, roomId, event);
+            timedSendToActiveUser(recipient.getUsername(), LOBBY_ACTIVITY_QUEUE, payload, roomId, event);
             recipientCount++;
         }
         log.info("[LOBBY] activity type={} roomId={} actor={} recipients={}",
@@ -173,7 +188,7 @@ public class GameWebSocketService {
                     userDestination,
                     patch.version(),
                     patch.patchId());
-            timedSendToUser(username, userDestination, patch, roomId, patch.type());
+            timedSendToActiveUser(username, userDestination, patch, roomId, patch.type());
         } else {
             log.error("[SYNC] action=privateHandPatchMissingPrincipal roomId={} gameId={} userId={} fallbackPollingRequired=true",
                     roomId, gameId, userId);
@@ -186,6 +201,17 @@ public class GameWebSocketService {
             resyncPayload.put("message", "Private state unavailable; refresh snapshot");
             timedSend("/topic/games/" + gameId, resyncPayload, roomId, "RESYNC_REQUIRED");
         }
+    }
+
+    public void sendSessionReplaced(String username, String webSocketSessionId) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("type", "SESSION_REPLACED");
+        payload.put("event", "SESSION_REPLACED");
+        payload.put("code", 401);
+        payload.put("message", ActiveLoginService.SESSION_REPLACED_MESSAGE);
+        payload.put("timestamp", System.currentTimeMillis());
+        timedSendToSession(username, webSocketSessionId, "/queue/session-status",
+                payload, null, "SESSION_REPLACED");
     }
 
     private void timedSend(String destination, Object payload, Object roomId, String event) {
@@ -234,5 +260,36 @@ public class GameWebSocketService {
                 username,
                 event,
                 costMs);
+    }
+
+    private void timedSendToActiveUser(String username,
+                                       String destination,
+                                       Object payload,
+                                       Object roomId,
+                                       String event) {
+        if (activeSessionRegistry == null) {
+            timedSendToUser(username, destination, payload, roomId, event);
+            return;
+        }
+
+        for (String sessionId : activeSessionRegistry.findActiveSessionIds(username)) {
+            timedSendToSession(username, sessionId, destination, payload, roomId, event);
+        }
+    }
+
+    private void timedSendToSession(String username,
+                                    String sessionId,
+                                    String destination,
+                                    Object payload,
+                                    Object roomId,
+                                    String event) {
+        SimpMessageHeaderAccessor headers = SimpMessageHeaderAccessor.create(SimpMessageType.MESSAGE);
+        headers.setSessionId(sessionId);
+        headers.setLeaveMutable(true);
+        long startedAt = System.nanoTime();
+        messagingTemplate.convertAndSendToUser(username, destination, payload, headers.getMessageHeaders());
+        long costMs = (System.nanoTime() - startedAt) / 1_000_000;
+        log.info("[PERF] action=sessionWebsocketSend roomId={} destination=/user{} user={} sessionId={} event={} costMs={}",
+                roomId, destination, username, sessionId, event, costMs);
     }
 }

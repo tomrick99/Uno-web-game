@@ -1,5 +1,6 @@
 const { createApp, ref, reactive, onMounted, onUnmounted } = Vue;
 const apiBase = "/api";
+const sessionReplacedMessage = "This account was signed in on another device. You have been signed out.";
 
 createApp({
     setup() {
@@ -20,6 +21,23 @@ createApp({
             gameMode: "CLASSIC"
         });
         let refreshTimer = null;
+        let signedOutByReplacement = false;
+        let responseInterceptorId = null;
+
+        const handleSessionReplaced = (payload = {}) => {
+            if (signedOutByReplacement) return;
+            signedOutByReplacement = true;
+            if (refreshTimer) {
+                clearInterval(refreshTimer);
+                refreshTimer = null;
+            }
+            const message = payload.message || sessionReplacedMessage;
+            localStorage.removeItem("userId");
+            localStorage.removeItem("username");
+            sessionStorage.setItem("loginNotice", message);
+            window.alert(message);
+            window.location.replace("index.html");
+        };
 
         const clearMessages = () => {
             errorMsg.value = "";
@@ -176,6 +194,13 @@ createApp({
         };
 
         onMounted(async () => {
+            responseInterceptorId = axios.interceptors.response.use((response) => response, (error) => {
+                const payload = error.response?.data;
+                if (Number(payload?.code) === 401 && payload?.message === sessionReplacedMessage) {
+                    handleSessionReplaced(payload);
+                }
+                return Promise.reject(error);
+            });
             const allowed = await checkAdmin();
             if (!allowed) return;
             await loadRooms();
@@ -187,6 +212,7 @@ createApp({
                 clearInterval(refreshTimer);
                 refreshTimer = null;
             }
+            if (responseInterceptorId !== null) axios.interceptors.response.eject(responseInterceptorId);
         });
 
         return {
