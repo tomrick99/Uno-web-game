@@ -422,6 +422,7 @@
 }
 
 .hand-cards .card.selected {
+    z-index: 2;
     transform: translateY(-24px);
     border: 3px solid var(--yellow);
     box-shadow: 0 0 25px rgba(243, 156, 18, 0.6);
@@ -433,6 +434,10 @@
     justify-content: center;
     gap: 10px;
     margin-top: 15px;
+}
+
+.mobile-play-controls {
+    display: none;
 }
 
 .penalty-panel {
@@ -578,6 +583,12 @@
 
 .btn-color-pick:hover {
     transform: scale(1.15);
+}
+
+.btn-color-pick.selected {
+    outline: 3px solid white;
+    outline-offset: 2px;
+    transform: scale(1.08);
 }
 
 /* 游戏日志 */
@@ -794,10 +805,175 @@
     to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
+@media (max-width: 1024px),
+       (hover: none) and (pointer: coarse) and (max-width: 1366px) {
+    html,
+    body {
+        min-height: 0;
+        overflow: hidden;
+        overscroll-behavior: none;
+    }
+
+    #app {
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+        width: 100%;
+        height: 100vh;
+        height: 100dvh;
+        overflow: hidden;
+    }
+
+    #app[v-cloak] {
+        display: none;
+    }
+
+    .game-top-bar,
+    .players-area,
+    .game-center,
+    .my-hand-area {
+        min-width: 0;
+        min-height: 0;
+    }
+
+    .players-area {
+        justify-content: flex-start;
+        flex-wrap: nowrap;
+        min-height: 0;
+        padding: 8px 12px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
+    }
+
+    .players-area::-webkit-scrollbar,
+    .status-panel::-webkit-scrollbar {
+        display: none;
+    }
+
+    .table-player {
+        min-width: 140px;
+        padding: 8px 10px;
+    }
+
+    .opponent-avatar {
+        width: 36px;
+        height: 36px;
+        font-size: 16px;
+    }
+
+    .game-center {
+        gap: clamp(20px, 7vw, 56px);
+        min-height: 0;
+        padding: 6px 12px;
+        overflow: hidden;
+    }
+
+    .game-center .card {
+        width: clamp(56px, 10vw, 80px);
+        height: clamp(84px, 15vw, 120px);
+    }
+
+    .game-center .card.large {
+        width: clamp(64px, 12vw, 90px);
+        height: clamp(96px, 18vw, 135px);
+    }
+
+    .my-hand-area {
+        padding: 0 12px 6px;
+        overflow: hidden;
+    }
+
+    .hand-cards {
+        gap: 6px;
+        min-height: 0;
+        padding: 30px 8px 8px;
+        scroll-padding-inline: 8px;
+    }
+
+    .hand-action-buttons {
+        display: none;
+    }
+
+    .mobile-play-controls {
+        position: relative;
+        z-index: 70;
+        display: grid;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+        gap: 8px;
+        width: min(720px, calc(100vw - 24px));
+        margin: 0 auto calc(24px + env(safe-area-inset-bottom, 0px));
+        padding: 10px;
+        background: rgba(13, 19, 40, 0.94);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 16px;
+        box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+        backdrop-filter: blur(14px);
+    }
+
+    .mobile-primary-action,
+    .mobile-draw-action {
+        grid-column: span 6;
+        min-width: 0;
+        min-height: 44px;
+        padding: 8px 12px;
+    }
+
+    .mobile-draw-action {
+        grid-column: 1 / -1;
+    }
+
+    .mobile-play-controls.has-selection .mobile-draw-action {
+        grid-column: span 6;
+    }
+
+    .mobile-play-controls.has-color-actions .mobile-primary-action,
+    .mobile-play-controls.has-color-actions .mobile-draw-action {
+        grid-column: span 3;
+    }
+
+    .mobile-color-actions {
+        display: flex;
+        grid-column: span 6;
+        justify-content: center;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .mobile-color-actions .btn-color-pick {
+        width: clamp(34px, 5vw, 42px);
+        height: clamp(34px, 5vw, 42px);
+        flex: 0 0 clamp(34px, 5vw, 42px);
+    }
+
+    .mobile-penalty-action {
+        grid-column: 1 / -1;
+        min-height: 44px;
+    }
+
+    .mobile-play-controls.has-selection.has-penalty-action:not(.has-color-actions) .mobile-penalty-action {
+        grid-column: span 6;
+    }
+
+    .mobile-play-controls.has-color-actions.has-penalty-action .mobile-penalty-action {
+        grid-column: span 3;
+    }
+}
+
+@media (min-width: 481px) and (max-width: 1024px),
+       (min-width: 481px) and (hover: none) and (pointer: coarse) and (max-width: 1366px) {
+    #app {
+        padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .mobile-play-controls {
+        margin-bottom: 0;
+    }
+}
+
 @media (max-width: 768px) {
     .game-top-bar {
-        padding: 14px 16px;
-        gap: 12px;
+        padding: 8px 12px;
+        gap: 6px;
         flex-direction: column;
         align-items: stretch;
     }
@@ -808,16 +984,23 @@
     }
 
     .status-panel {
-        gap: 8px;
+        justify-content: flex-start;
+        flex-wrap: nowrap;
+        gap: 6px;
+        min-width: 0;
+        overflow-x: auto;
+        scrollbar-width: none;
     }
 
     .status-chip {
+        flex: 0 0 auto;
         justify-content: center;
+        padding: 6px 8px;
     }
 
     .game-center {
-        gap: 28px;
-        min-height: 220px;
+        gap: 20px;
+        min-height: 0;
     }
 
     .game-help-panel {
@@ -835,5 +1018,157 @@
 
     .help-section {
         font-size: 12px;
+    }
+}
+
+@media (max-width: 480px) {
+    .my-hand-area {
+        padding-right: 0;
+        padding-bottom: 4px;
+        padding-left: 0;
+    }
+
+    .hand-cards {
+        gap: 8px;
+        padding: 36px 16px 18px;
+        scroll-padding-inline: 16px;
+        scroll-snap-type: x proximity;
+        overscroll-behavior-inline: contain;
+        scrollbar-width: none;
+    }
+
+    .hand-cards::-webkit-scrollbar {
+        display: none;
+    }
+
+    .hand-cards .card {
+        width: 64px;
+        min-width: 64px;
+        height: 96px;
+        scroll-snap-align: start;
+    }
+
+    .mobile-play-controls {
+        gap: 6px;
+        width: calc(100vw - 16px);
+        margin-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+        padding: 6px;
+    }
+
+    .mobile-primary-action,
+    .mobile-draw-action,
+    .mobile-penalty-action {
+        min-height: 42px;
+        padding: 7px 4px;
+    }
+
+    .mobile-color-actions {
+        gap: 4px;
+    }
+
+    .mobile-color-actions .btn-color-pick {
+        width: 34px;
+        height: 34px;
+        flex-basis: 34px;
+        font-size: 12px;
+    }
+}
+
+@media (max-width: 1024px) and (orientation: landscape) and (max-height: 500px) {
+    .game-top-bar {
+        flex-direction: row;
+        gap: 8px;
+        padding: 6px 10px;
+    }
+
+    .game-info {
+        flex: 0 0 auto;
+        gap: 8px;
+    }
+
+    .status-panel {
+        flex-wrap: nowrap;
+        gap: 6px;
+        min-width: 0;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .status-chip,
+    .lang-toggle,
+    .top-action-btn {
+        flex: 0 0 auto;
+        padding: 6px 8px;
+    }
+
+    .status-label {
+        display: none;
+    }
+
+    .players-area {
+        gap: 6px;
+        padding: 4px 10px;
+    }
+
+    .table-player {
+        min-width: 125px;
+        padding: 5px 8px;
+    }
+
+    .opponent-avatar {
+        width: 30px;
+        height: 30px;
+        font-size: 14px;
+    }
+
+    .game-center {
+        padding-block: 2px;
+    }
+
+    .game-center .card {
+        width: 48px;
+        height: 72px;
+    }
+
+    .game-center .card.large {
+        width: 56px;
+        height: 84px;
+    }
+
+    .pile-label {
+        display: none;
+    }
+
+    .my-hand-area {
+        padding-bottom: 2px;
+    }
+
+    .hand-cards {
+        padding: 26px 10px 6px;
+    }
+
+    .hand-cards .card {
+        width: 48px;
+        min-width: 48px;
+        height: 72px;
+    }
+
+    .mobile-play-controls {
+        margin-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+        gap: 6px;
+        padding: 6px;
+    }
+
+    .mobile-primary-action,
+    .mobile-draw-action,
+    .mobile-penalty-action {
+        min-height: 40px;
+        padding-block: 6px;
+    }
+
+    .mobile-color-actions .btn-color-pick {
+        width: 40px;
+        height: 40px;
+        flex-basis: 40px;
     }
 }

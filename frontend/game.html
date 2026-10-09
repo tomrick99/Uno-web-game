@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>UNO - Game</title>
     <script src="https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios@1.5.0/dist/axios.min.js"></script>
@@ -148,7 +148,7 @@
                 </div>
             </div>
 
-            <div class="action-buttons" v-if="selectedCard !== null">
+            <div class="action-buttons hand-action-buttons" v-if="selectedCard !== null">
                 <button id="playSelectedCardButton" class="btn-play" :disabled="!canPlaySelected || playingCard" @click="playSelectedCard">
                     {{ playingCard ? t("playing") : t("playCard") }}
                 </button>
@@ -170,6 +170,50 @@
                 </button>
             </div>
         </section>
+
+        <nav
+            class="mobile-play-controls"
+            :class="{
+                'has-selection': selectedCard !== null,
+                'has-color-actions': selectedCard !== null && needsColorPick,
+                'has-penalty-action': showDrawPenaltyButton
+            }"
+            aria-label="Game actions"
+        >
+            <button
+                v-if="selectedCard !== null"
+                id="mobilePlaySelectedCardButton"
+                class="btn-play mobile-primary-action"
+                :disabled="!canPlaySelected || playingCard"
+                @click="playSelectedCard"
+            >
+                {{ playingCard ? t("playing") : t("playCard") }}
+            </button>
+            <button
+                v-if="!showDrawPenaltyButton"
+                id="mobileDrawCardButton"
+                class="btn-secondary mobile-draw-action"
+                :disabled="!canDraw || drawingCard"
+                @click="drawCardAction"
+            >
+                {{ drawingCard ? t("drawing") : t("clickDraw") }}
+            </button>
+            <div v-if="selectedCard !== null && needsColorPick" class="mobile-color-actions" :aria-label="t('chooseColor')">
+                <button class="btn-color-pick" :class="{ selected: chosenColor === 'RED' }" :aria-pressed="chosenColor === 'RED'" @click="pickColor('RED')">{{ colorName("RED") }}</button>
+                <button class="btn-color-pick blue" :class="{ selected: chosenColor === 'BLUE' }" :aria-pressed="chosenColor === 'BLUE'" @click="pickColor('BLUE')">{{ colorName("BLUE") }}</button>
+                <button class="btn-color-pick green" :class="{ selected: chosenColor === 'GREEN' }" :aria-pressed="chosenColor === 'GREEN'" @click="pickColor('GREEN')">{{ colorName("GREEN") }}</button>
+                <button class="btn-color-pick yellow" :class="{ selected: chosenColor === 'YELLOW' }" :aria-pressed="chosenColor === 'YELLOW'" @click="pickColor('YELLOW')">{{ colorName("YELLOW") }}</button>
+            </div>
+            <button
+                v-if="showDrawPenaltyButton"
+                id="mobileDrawPenaltyButton"
+                class="btn-primary mobile-penalty-action"
+                :disabled="drawingPenalty"
+                @click="drawPenaltyAction()"
+            >
+                {{ drawPenaltyButtonText }}
+            </button>
+        </nav>
 
         <div class="game-log" :class="{ expanded: logExpanded }">
             <div class="log-toggle" @click="logExpanded = !logExpanded">{{ t("gameLog") }}</div>
