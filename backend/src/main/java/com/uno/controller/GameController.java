@@ -3,6 +3,7 @@ package com.uno.controller;
 import com.uno.dto.response.ApiResponse;
 import com.uno.entity.enums.CardColor;
 import com.uno.service.GameService;
+import com.uno.service.DisconnectGracePeriodService;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,9 +20,12 @@ import java.util.Map;
 public class GameController {
 
     private final GameService gameService;
+    private final DisconnectGracePeriodService disconnectGracePeriodService;
 
-    public GameController(GameService gameService) {
+    public GameController(GameService gameService,
+                          DisconnectGracePeriodService disconnectGracePeriodService) {
         this.gameService = gameService;
+        this.disconnectGracePeriodService = disconnectGracePeriodService;
     }
 
     private Long getCurrentUserId(HttpSession session) {
@@ -129,6 +133,23 @@ public class GameController {
 
         try {
             return ApiResponse.success("Game restarted", gameService.restartGame(gameId, userId));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.error(400, e.getMessage());
+        } catch (RuntimeException e) {
+            return ApiResponse.error(500, e.getMessage());
+        }
+    }
+
+    @PostMapping("/{gameId}/disconnect/continue")
+    public ApiResponse<Map<String, Object>> continueWithoutDisconnectedPlayer(@PathVariable Long gameId,
+                                                                               HttpSession session) {
+        Long userId = getCurrentUserId(session);
+        if (userId == null) {
+            return unauthorized();
+        }
+        try {
+            return ApiResponse.success("Continue vote recorded",
+                    disconnectGracePeriodService.voteToContinue(gameId, userId));
         } catch (IllegalArgumentException e) {
             return ApiResponse.error(400, e.getMessage());
         } catch (RuntimeException e) {

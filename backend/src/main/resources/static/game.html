@@ -9,7 +9,7 @@
     <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
     <link rel="stylesheet" href="css/common.css">
-    <link rel="stylesheet" href="css/game.css">
+    <link rel="stylesheet" href="css/game.css?v=sc2-c2-r1">
 </head>
 <body>
     <div id="app" v-cloak>
@@ -51,12 +51,29 @@
             </div>
         </header>
 
+        <section v-if="disconnectWaiting" class="disconnect-waiting-panel" role="status" aria-live="polite">
+            <div class="disconnect-waiting-copy">
+                <strong>{{ t("playerDisconnected", { player: disconnectState.disconnectedUsername }) }}</strong>
+                <span>{{ t("waitingForDisconnected") }}</span>
+                <span class="disconnect-countdown">{{ t("remainingWait", { seconds: disconnectRemainingSeconds }) }}</span>
+                <span>{{ t("continueVotes", { approved: disconnectState.approvedCount || 0, required: disconnectState.requiredCount || 0 }) }}</span>
+            </div>
+            <button
+                v-if="canVoteToContinue"
+                class="btn-primary disconnect-continue-btn"
+                :disabled="hasContinueVote || continueVoteSubmitting"
+                @click="continueWithoutDisconnectedPlayer"
+            >
+                {{ hasContinueVote ? t("continueVoteRecorded") : t("continueWithoutPlayer") }}
+            </button>
+        </section>
+
         <section class="players-area">
             <div
                 v-for="player in tablePlayers"
                 :key="player.userId"
                 class="table-player"
-                :class="{ 'current-turn': player.isCurrentTurn, me: player.isMe }"
+                :class="{ 'current-turn': player.isCurrentTurn, me: player.isMe, disconnected: disconnectWaiting && String(player.userId) === String(disconnectState.disconnectedUserId) }"
             >
                 <div class="opponent-avatar">{{ player.username.charAt(0).toUpperCase() }}</div>
                 <div class="player-info">
@@ -176,7 +193,7 @@
         <div v-if="toastVisible" class="toast-msg" :class="toastType">{{ toastMsg }}</div>
     </div>
 
-    <script src="js/pages/realtime-utils.js"></script>
-    <script src="js/pages/game.js"></script>
+    <script src="js/pages/realtime-utils.js?v=sc2-c2-r1"></script>
+    <script src="js/pages/game.js?v=sc2-c2-r1"></script>
 </body>
 </html>

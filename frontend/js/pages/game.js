@@ -59,6 +59,9 @@ createApp({
         const hasLoadedHand = ref(false);
         const autoPenaltyInProgress = ref(false);
         const lastAutoPenaltyKey = ref("");
+        const disconnectState = ref({ waiting: false });
+        const disconnectRemainingSeconds = ref(0);
+        const continueVoteSubmitting = ref(false);
 
         const stompClient = shallowRef(null);
         const roomSubscription = ref(null);
@@ -79,6 +82,7 @@ createApp({
         let pendingRealtimeBatchTimer = null;
         let gameStartConsistencyTimer = null;
         let lastGameStartConsistencyKey = null;
+        let disconnectCountdownTimer = null;
 
         const colorMap = {
             RED: "#E74C3C",
@@ -164,7 +168,13 @@ createApp({
                 classicRule3: "Classic 只保留现有 +2 / +4 叠加规则。",
                 noMercyRule1: "No Mercy 额外包含 DROP、SKIP ALL、彩色 +4 和黑色 +6 / +10 / +4 REV。",
                 noMercyRule2: "黑色罚牌打出后需要选颜色。",
-                noMercyRule3: "罚牌叠加必须不小于上一张罚牌数值。"
+                noMercyRule3: "罚牌叠加必须不小于上一张罚牌数值。",
+                playerDisconnected: "{player} 已断线",
+                waitingForDisconnected: "正在等待该玩家重新连接",
+                remainingWait: "剩余 {seconds} 秒",
+                continueWithoutPlayer: "不等待该玩家，继续游戏",
+                continueVoteRecorded: "已同意继续，等待其他在线玩家",
+                continueVotes: "同意继续：{approved} / {required}"
             },
             en: {
                 room: "Room",
@@ -242,7 +252,13 @@ createApp({
                 classicRule3: "+2 and +4 use Classic stacking; Classic does not include No Mercy cards.",
                 noMercyRule1: "Adds DROP, SKIP ALL, colored +4, and black +6, +10, +4 REV.",
                 noMercyRule2: "Black penalty cards require color selection; the card face only shows the penalty.",
-                noMercyRule3: "Draw stacks must be equal or higher than the last penalty: +6 accepts +6/+10, +10 accepts +10."
+                noMercyRule3: "Draw stacks must be equal or higher than the last penalty: +6 accepts +6/+10, +10 accepts +10.",
+                playerDisconnected: "{player} disconnected",
+                waitingForDisconnected: "Waiting for this player to reconnect",
+                remainingWait: "{seconds} seconds remaining",
+                continueWithoutPlayer: "Continue without this player",
+                continueVoteRecorded: "Vote recorded; waiting for the other online players",
+                continueVotes: "Continue votes: {approved} / {required}"
             }
         };
 
@@ -285,8 +301,15 @@ createApp({
         const isDrawPenaltyType = (type) => drawPenaltyTypes.has(type);
         const isNumberType = (type) => type === "NUMBER";
 
+        const disconnectWaiting = computed(() => Boolean(disconnectState.value?.waiting));
+        const hasContinueVote = computed(() => (disconnectState.value?.approvedUserIds || [])
+            .map(String).includes(String(userId.value)));
+        const canVoteToContinue = computed(() => disconnectWaiting.value
+            && String(disconnectState.value?.disconnectedUserId) !== String(userId.value));
         const isMyTurn = computed(() =>
-            gameStatus.value === "PLAYING" && String(currentTurn.value) === String(userId.value)
+            !disconnectWaiting.value
+            && gameStatus.value === "PLAYING"
+            && String(currentTurn.value) === String(userId.value)
         );
         const isPendingDrawStack = computed(() =>
             Number(pendingDrawCount.value) > 0 && pendingDrawType.value !== "NONE"
@@ -560,6 +583,9 @@ createApp({
         });
 
         const turnLabel = computed(() => {
+            if (disconnectWaiting.value) {
+                return t("waitingForDisconnected");
+            }
             if (gameStatus.value === "FINISHED") return t("gameFinished");
             if (gameStatus.value !== "PLAYING") {
                 return `${t("waitingPlayers")} (${playerCount.value}/${maxPlayers.value})`;
@@ -607,6 +633,44 @@ createApp({
                 clearTimeout(autoPenaltyTimer);
                 autoPenaltyTimer = null;
             }
+        };
+
+        const clearDisconnectCountdown = () => {
+            if (disconnectCountdownTimer) {
+                clearInterval(disconnectCountdownTimer);
+                disconnectCountdownTimer = null;
+            }
+        };
+
+        const updateDisconnectCountdown = () => {
+            const deadline = Number(disconnectState.value?.deadlineEpochMs || 0);
+            disconnectRemainingSeconds.value = deadline > 0
+                ? Math.max(0, Math.ceil((deadline - Date.now()) / 1000))
+                : Number(disconnectState.value?.remainingSeconds || 0);
+        };
+
+        const applyDisconnectState = (state) => {
+            if (!state || !state.waiting) {
+                disconnectState.value = { waiting: false };
+                disconnectRemainingSeconds.value = 0;
+                continueVoteSubmitting.value = false;
+                clearDisconnectCountdown();
+                refreshHandPlayability();
+                syncPendingDrawUiState();
+                return;
+            }
+            disconnectState.value = {
+                ...state,
+                approvedUserIds: Array.from(state.approvedUserIds || []),
+                requiredUserIds: Array.from(state.requiredUserIds || [])
+            };
+            continueVoteSubmitting.value = false;
+            clearCardSelection();
+            clearAutoPenaltyTimer();
+            updateDisconnectCountdown();
+            clearDisconnectCountdown();
+            disconnectCountdownTimer = setInterval(updateDisconnectCountdown, 250);
+            refreshHandPlayability();
         };
 
         const refreshHandPlayability = () => {
@@ -718,6 +782,7 @@ createApp({
             drawPileSize.value = 0;
             topCard.value = null;
             handCards.value = [];
+            applyDisconnectState({ waiting: false });
             tablePlayers.value = [];
             opponents.value = [];
             currentPlayerName.value = t("waitingPlayers");
@@ -836,6 +901,9 @@ createApp({
                 };
             }
             if (payload.type === "ROOM_DELETED" || payload.type === "FULL_SNAPSHOT") {
+                return payload;
+            }
+            if (payload.type === "PLAYER_CONNECTION_WAIT") {
                 return payload;
             }
             if (Array.isArray(payload.handCards) && (payload.userId !== undefined || String(payload.type || "").startsWith("HAND_"))) {
@@ -1063,6 +1131,7 @@ createApp({
             if (hasOwnField(gameState, "pendingDrawType")) pendingDrawType.value = gameState.pendingDrawType ?? "NONE";
             if (hasOwnField(gameState, "lastPenaltyPlayerId")) lastPenaltyPlayerId.value = gameState.lastPenaltyPlayerId;
             if (hasOwnField(gameState, "drawPileSize")) drawPileSize.value = Number(gameState.drawPileSize ?? 0);
+            if (hasOwnField(gameState, "disconnectState")) applyDisconnectState(gameState.disconnectState);
             if (hasOwnField(gameState, "topCard") && gameState.topCard) {
                 topCard.value = {
                     color: gameState.topCard.color,
@@ -1099,6 +1168,10 @@ createApp({
             const incomingTurn = normalizedPayload?.gameState?.currentTurn ?? normalizedPayload?.roomState?.currentTurn ?? null;
             console.info("[UNO-SYNC] applying state source=...", source, eventName);
             console.debug(`[UNO-SYNC] applying state source=${source} roomVersion=${roomVersion ?? "none"} gameVersion=${gameVersion ?? "none"} currentTurn=${incomingTurn ?? "none"}`);
+
+            if (normalizedPayload.disconnectState) {
+                applyDisconnectState(normalizedPayload.disconnectState);
+            }
 
             if (normalizedPayload.type === "FULL_SNAPSHOT") {
                 // Full snapshot is the only payload type allowed to refresh room, game, and hand together.
@@ -1719,6 +1792,28 @@ createApp({
             }
         };
 
+        const continueWithoutDisconnectedPlayer = async () => {
+            if (!gameId.value || !canVoteToContinue.value || hasContinueVote.value || continueVoteSubmitting.value) return;
+            continueVoteSubmitting.value = true;
+            try {
+                const response = await axios.post(`${apiBase}/game/${gameId.value}/disconnect/continue`);
+                if (response.data.code === 200) {
+                    if (response.data.data?.waiting === false) {
+                        applyDisconnectState({ waiting: false });
+                    } else if (response.data.data) {
+                        applyDisconnectState(response.data.data);
+                        showToastMessage(t("continueVoteRecorded"));
+                    }
+                } else {
+                    showToastMessage(response.data.message || t("continueVoteRecorded"), "error");
+                }
+            } catch (error) {
+                showToastMessage(error.response?.data?.message || t("continueVoteRecorded"), "error");
+            } finally {
+                continueVoteSubmitting.value = false;
+            }
+        };
+
         const handleDelegatedButtonClick = (event) => {
             const button = event.target.closest("#backToLobbyButton, #endReturnLobbyBtn, #restartGameBtn, #drawPenaltyButton");
             if (!button || button.disabled) return;
@@ -1776,6 +1871,7 @@ createApp({
             shouldReconnect = false;
             cleanupRealtime();
             clearAutoPenaltyTimer();
+            clearDisconnectCountdown();
             if (beforeUnloadHandler) window.removeEventListener("beforeunload", beforeUnloadHandler);
             if (delegatedButtonHandler) document.removeEventListener("click", delegatedButtonHandler);
         });
@@ -1821,6 +1917,12 @@ createApp({
             drawingCard,
             drawingPenalty,
             playingCard,
+            disconnectState,
+            disconnectWaiting,
+            disconnectRemainingSeconds,
+            continueVoteSubmitting,
+            hasContinueVote,
+            canVoteToContinue,
             canDraw,
             canPlaySelected,
             showPenaltyNotice,
@@ -1844,6 +1946,7 @@ createApp({
             drawCardAction,
             drawPenaltyAction,
             restartGameAction,
+            continueWithoutDisconnectedPlayer,
             returnToLobby
         };
     }

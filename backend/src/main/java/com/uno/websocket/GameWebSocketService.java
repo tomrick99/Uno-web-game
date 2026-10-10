@@ -161,6 +161,24 @@ public class GameWebSocketService {
                 patch.version());
     }
 
+    public void broadcastDisconnectWaitingState(Long gameId,
+                                                Long roomId,
+                                                String event,
+                                                Map<String, Object> disconnectState,
+                                                String message) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("type", "PLAYER_CONNECTION_WAIT");
+        payload.put("event", event);
+        payload.put("gameId", gameId);
+        payload.put("roomId", roomId);
+        payload.put("disconnectState", disconnectState);
+        payload.put("timestamp", System.currentTimeMillis());
+        if (message != null && !message.isBlank()) {
+            payload.put("message", message);
+        }
+        timedSend("/topic/games/" + gameId, payload, roomId, event);
+    }
+
     public void sendPrivateHandPatch(String username,
                                      Long roomId,
                                      Long gameId,

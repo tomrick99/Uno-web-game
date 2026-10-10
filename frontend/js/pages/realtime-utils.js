@@ -91,6 +91,9 @@
             handCards: preferHand
                 ? (patch.handCards !== undefined ? patch.handCards : base.handCards)
                 : base.handCards,
+            disconnectState: patch.disconnectState !== undefined
+                ? patch.disconnectState
+                : base.disconnectState,
             message: patch.message !== undefined ? patch.message : base.message,
             resync: Boolean(base.resync || patch.resync),
             version: patchVersion !== null && (baseVersion === null || patchVersion >= baseVersion)

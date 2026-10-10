@@ -31,6 +31,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.time.Instant;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -38,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
@@ -76,6 +78,9 @@ class GameServiceMultiplayerIntegrationTest {
 
     @Autowired
     private PlatformTransactionManager transactionManager;
+
+    @Autowired
+    private DisconnectWaitingRegistry disconnectWaitingRegistry;
 
     @MockBean
     private GameWebSocketService wsService;
@@ -298,6 +303,54 @@ class GameServiceMultiplayerIntegrationTest {
         assertEquals(0, penaltyPatch.pendingPenalty());
         assertEquals(PendingDrawType.NONE.name(), penaltyPatch.pendingDrawType());
         assertEquals(3, penaltyPatch.players().get(0).handCount());
+    }
+
+    @Test
+    void disconnectWaitingBlocksActionsWithoutAdvancingTurn() {
+        Fixture fixture = createGame(List.of(
+                List.of(number(CardColor.RED, 1), number(CardColor.BLUE, 1)),
+                List.of(number(CardColor.RED, 2), number(CardColor.BLUE, 2)),
+                List.of(number(CardColor.RED, 3), number(CardColor.BLUE, 3))
+        ), drawPile(12));
+        Game game = gameRepository.findById(fixture.gameId()).orElseThrow();
+        disconnectWaitingRegistry.begin(
+                fixture.gameId(), game.getRoom().getId(), fixture.userId(1), "disconnected",
+                Instant.now().plusSeconds(60));
+
+        try {
+            assertThrows(IllegalArgumentException.class,
+                    () -> gameService.playCard(fixture.gameId(), fixture.userId(0), 0, null));
+            Game unchanged = gameRepository.findById(fixture.gameId()).orElseThrow();
+            assertEquals(fixture.userId(0), unchanged.getCurrentTurn());
+            assertEquals(2, committedPlayers(fixture.gameId()).get(0).getHandCards().size());
+            assertTrue(publicPatches.isEmpty());
+        } finally {
+            disconnectWaitingRegistry.resolve(fixture.gameId(), fixture.userId(1));
+        }
+    }
+
+    @Test
+    void removingDisconnectedCurrentPlayerKeepsTurnOrderValidAndGamePlayable() {
+        Fixture fixture = createGame(List.of(
+                List.of(number(CardColor.RED, 1), number(CardColor.BLUE, 1)),
+                List.of(number(CardColor.RED, 2), number(CardColor.BLUE, 2)),
+                List.of(number(CardColor.RED, 3), number(CardColor.BLUE, 3))
+        ), drawPile(12));
+
+        gameService.removeDisconnectedPlayer(fixture.gameId(), fixture.userId(0), "DISCONNECT_TIMEOUT");
+
+        Game afterRemoval = gameRepository.findById(fixture.gameId()).orElseThrow();
+        assertEquals(GameStatus.PLAYING, afterRemoval.getStatus());
+        assertEquals(fixture.userId(1), afterRemoval.getCurrentTurn());
+        assertEquals(List.of(fixture.userId(1), fixture.userId(2)),
+                committedPlayers(fixture.gameId()).stream().map(player -> player.getUser().getId()).toList());
+        assertEquals(List.of(0, 1),
+                committedPlayers(fixture.gameId()).stream().map(GamePlayer::getSeatIndex).toList());
+        assertEquals("DISCONNECTED_PLAYER_REMOVED", lastPublicPatch().type());
+
+        gameService.playCard(fixture.gameId(), fixture.userId(1), 0, null);
+        assertEquals(fixture.userId(2),
+                gameRepository.findById(fixture.gameId()).orElseThrow().getCurrentTurn());
     }
 
     private long assertPatch(PublicGamePatch patch,

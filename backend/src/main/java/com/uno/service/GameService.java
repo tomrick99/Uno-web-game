@@ -22,6 +22,7 @@ import com.uno.repository.UserRepository;
 import com.uno.websocket.GameWebSocketService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -63,8 +64,26 @@ public class GameService {
     private final UserRepository userRepository;
     private final GameWebSocketService wsService;
     private final RoomService roomService;
+    private final DisconnectWaitingRegistry disconnectWaitingRegistry;
     private final ConcurrentHashMap<Long, ReentrantLock> roomLocks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, AtomicLong> roomStateVersions = new ConcurrentHashMap<>();
+
+    @Autowired
+    public GameService(GameRepository gameRepository,
+                       GamePlayerRepository gamePlayerRepository,
+                       RoomRepository roomRepository,
+                       UserRepository userRepository,
+                       GameWebSocketService wsService,
+                       RoomService roomService,
+                       DisconnectWaitingRegistry disconnectWaitingRegistry) {
+        this.gameRepository = gameRepository;
+        this.gamePlayerRepository = gamePlayerRepository;
+        this.roomRepository = roomRepository;
+        this.userRepository = userRepository;
+        this.wsService = wsService;
+        this.roomService = roomService;
+        this.disconnectWaitingRegistry = disconnectWaitingRegistry;
+    }
 
     public GameService(GameRepository gameRepository,
                        GamePlayerRepository gamePlayerRepository,
@@ -72,12 +91,7 @@ public class GameService {
                        UserRepository userRepository,
                        GameWebSocketService wsService,
                        RoomService roomService) {
-        this.gameRepository = gameRepository;
-        this.gamePlayerRepository = gamePlayerRepository;
-        this.roomRepository = roomRepository;
-        this.userRepository = userRepository;
-        this.wsService = wsService;
-        this.roomService = roomService;
+        this(gameRepository, gamePlayerRepository, roomRepository, userRepository, wsService, roomService, null);
     }
 
     public Map<String, Object> joinGame(Long roomId, Long userId) {
@@ -124,6 +138,11 @@ public class GameService {
 
     public Map<String, Object> leaveRoom(Long roomId, Long userId) {
         return withRoomLock(roomId, () -> doLeaveRoom(roomId, userId));
+    }
+
+    public Map<String, Object> removeDisconnectedPlayer(Long gameId, Long userId, String reason) {
+        Long roomId = getRoomIdByGameId(gameId);
+        return withRoomLock(roomId, () -> doRemoveDisconnectedPlayer(gameId, userId, reason));
     }
 
     public Map<String, Object> restartGame(Long gameId, Long userId) {
@@ -255,6 +274,9 @@ public class GameService {
                 game.getStatus() == GameStatus.FINISHED
                         && !players.isEmpty()
                         && rematchReadyPlayerIds.size() == players.size());
+        state.put("disconnectState", disconnectWaitingRegistry != null
+                ? disconnectWaitingRegistry.snapshot(gameId)
+                : Map.of("waiting", false));
         state.put("version", getCurrentStateVersion(roomId, game));
         return state;
     }
@@ -371,6 +393,8 @@ public class GameService {
     private Map<String, Object> doPlayCard(Long gameId, Long userId, int cardIndex, CardColor chosenColor) {
         Game game = gameRepository.findById(gameId)
                 .orElseThrow(() -> new IllegalArgumentException("Game not found"));
+
+        assertGameProgressAllowed(gameId);
 
         if (game.getStatus() != GameStatus.PLAYING) {
             throw new IllegalArgumentException("Game is not in playing state");
@@ -492,6 +516,8 @@ public class GameService {
         Game game = gameRepository.findById(gameId)
                 .orElseThrow(() -> new IllegalArgumentException("Game not found"));
 
+        assertGameProgressAllowed(gameId);
+
         if (game.getStatus() != GameStatus.PLAYING) {
             throw new IllegalArgumentException("Game is not in playing state");
         }
@@ -548,6 +574,8 @@ public class GameService {
     private Map<String, Object> doDrawPenalty(Long gameId, Long userId) {
         Game game = gameRepository.findById(gameId)
                 .orElseThrow(() -> new IllegalArgumentException("Game not found"));
+
+        assertGameProgressAllowed(gameId);
 
         if (game.getStatus() != GameStatus.PLAYING) {
             throw new IllegalArgumentException("Game is not in playing state");
@@ -748,6 +776,94 @@ public class GameService {
         result.put("message", "Left room");
         result.put("roomState", roomState);
         return result;
+    }
+
+    private Map<String, Object> doRemoveDisconnectedPlayer(Long gameId, Long userId, String reason) {
+        Game game = gameRepository.findById(gameId)
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
+        Room room = game.getRoom();
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found"));
+        List<GamePlayer> playersBeforeRemoval = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game);
+        int removedIndex = -1;
+        GamePlayer disconnectedPlayer = null;
+        for (int index = 0; index < playersBeforeRemoval.size(); index++) {
+            GamePlayer candidate = playersBeforeRemoval.get(index);
+            if (candidate.getUser().getId().equals(userId)) {
+                removedIndex = index;
+                disconnectedPlayer = candidate;
+                break;
+            }
+        }
+        if (disconnectedPlayer == null) {
+            return Map.of("removed", false, "message", "Player already removed");
+        }
+
+        boolean removedCurrentPlayer = userId.equals(game.getCurrentTurn());
+        gamePlayerRepository.delete(disconnectedPlayer);
+        gamePlayerRepository.flush();
+        List<GamePlayer> remainingPlayers = new ArrayList<>(playersBeforeRemoval);
+        remainingPlayers.remove(disconnectedPlayer);
+
+        if (remainingPlayers.isEmpty()) {
+            wsService.broadcastRoomDeleted(room.getId(), game.getId(), user.getUsername() + " disconnected");
+            gameRepository.delete(game);
+            roomRepository.delete(room);
+            return Map.of("removed", true, "roomClosed", true, "remainingPlayers", 0);
+        }
+
+        reseatPlayers(remainingPlayers);
+        if (room.getHost().getId().equals(userId)) {
+            room.setHost(remainingPlayers.get(0).getUser());
+        }
+
+        if (remainingPlayers.size() == 1) {
+            game.setStatus(GameStatus.FINISHED);
+            game.setCurrentTurn(null);
+            clearPendingDraw(game);
+            room.setStatus(RoomStatus.CLOSED);
+        } else {
+            if (removedCurrentPlayer || remainingPlayers.stream()
+                    .noneMatch(player -> player.getUser().getId().equals(game.getCurrentTurn()))) {
+                int nextIndex = game.isClockwise()
+                        ? Math.floorMod(removedIndex, remainingPlayers.size())
+                        : Math.floorMod(removedIndex - 1, remainingPlayers.size());
+                game.setCurrentTurn(remainingPlayers.get(nextIndex).getUser().getId());
+            }
+            game.setStatus(GameStatus.PLAYING);
+            room.setStatus(RoomStatus.PLAYING);
+        }
+
+        roomRepository.save(room);
+        gameRepository.save(game);
+        long version = bumpStateVersion(room.getId());
+        String resolution = "UNANIMOUS_CONTINUE".equals(reason)
+                ? "Players unanimously continued without " + user.getUsername()
+                : user.getUsername() + " was removed after disconnect timeout";
+        Map<String, Object> roomState = getRoomStateWithVersion(room, game);
+        PublicGamePatch publicPatch = buildPublicGamePatch(
+                game, remainingPlayers, "DISCONNECTED_PLAYER_REMOVED", userId, user.getUsername(), resolution);
+        publishAfterCommit("removeDisconnectedPlayer", () -> {
+            wsService.broadcastRoomState(roomState, "PLAYER_LEFT", resolution);
+            wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", null);
+            wsService.broadcastPublicGamePatch(publicPatch);
+        });
+
+        log.info("[DISCONNECT] player removed gameId={} roomId={} userId={} reason={} remaining={} currentTurn={} version={}",
+                gameId, room.getId(), userId, reason, remainingPlayers.size(), game.getCurrentTurn(), version);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("removed", true);
+        result.put("roomClosed", remainingPlayers.size() == 1);
+        result.put("remainingPlayers", remainingPlayers.size());
+        result.put("currentTurn", game.getCurrentTurn());
+        result.put("version", version);
+        return result;
+    }
+
+    private void assertGameProgressAllowed(Long gameId) {
+        if (disconnectWaitingRegistry != null && disconnectWaitingRegistry.isWaiting(gameId)) {
+            throw new IllegalArgumentException("Game is waiting for a disconnected player");
+        }
     }
 
     private Game createWaitingGame(Room room) {

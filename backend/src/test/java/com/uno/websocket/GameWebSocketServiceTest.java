@@ -132,6 +132,27 @@ class GameWebSocketServiceTest {
     }
 
     @Test
+    void disconnectWaitingStateUsesTheSubscribedGameTopic() {
+        RecordingTemplate template = new RecordingTemplate();
+        GameWebSocketService service = new GameWebSocketService(template);
+        Map<String, Object> state = Map.of(
+                "waiting", true,
+                "disconnectedUserId", 7L,
+                "disconnectedUsername", "alice",
+                "remainingSeconds", 60L);
+
+        service.broadcastDisconnectWaitingState(20L, 10L, "PLAYER_DISCONNECTED", state, "alice disconnected");
+
+        assertEquals("/topic/games/20", template.destination);
+        Map<?, ?> payload = (Map<?, ?>) template.payload;
+        assertEquals("PLAYER_CONNECTION_WAIT", payload.get("type"));
+        assertEquals("PLAYER_DISCONNECTED", payload.get("event"));
+        assertEquals(20L, payload.get("gameId"));
+        assertEquals(10L, payload.get("roomId"));
+        assertEquals(state, payload.get("disconnectState"));
+    }
+
+    @Test
     void publicGameBroadcastCarriesVersionWithoutHandCards() {
         RecordingTemplate template = new RecordingTemplate();
         GameWebSocketService service = new GameWebSocketService(template);
