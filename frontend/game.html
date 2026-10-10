@@ -2,14 +2,14 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>UNO - Game</title>
     <script src="https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios@1.5.0/dist/axios.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
     <link rel="stylesheet" href="css/common.css">
-    <link rel="stylesheet" href="css/game.css">
+    <link rel="stylesheet" href="css/game.css?v=sc2-c4-r1">
 </head>
 <body>
     <div id="app" v-cloak>
@@ -148,17 +148,67 @@
                 </div>
             </div>
 
-            <div class="action-buttons" v-if="selectedCard !== null">
+            <div class="mobile-action-dock" aria-label="Game actions">
+                <div
+                    class="mobile-action-status"
+                    :class="{ selected: selectedCardInfo, playable: selectedCardInfo && selectedCardInfo.canPlay }"
+                    aria-live="polite"
+                >
+                    <span class="mobile-action-status-label">
+                        {{ selectedCardInfo ? `${t("selectedCard")}: ${selectedCardInfo.display}` : turnLabel }}
+                    </span>
+                    <span v-if="selectedCardInfo" class="mobile-action-status-hint">{{ selectedCardInfo.playHint }}</span>
+                </div>
+
+                <div v-if="showPenaltyNotice" class="mobile-penalty-text">{{ penaltyNoticeText }}</div>
+
+                <div class="mobile-primary-actions">
+                    <button
+                        id="mobileDrawCardButton"
+                        class="mobile-draw-button"
+                        :disabled="!canDraw || drawingCard"
+                        @click="drawCardAction"
+                    >
+                        {{ drawingCard ? t("drawing") : t("clickDraw") }}
+                    </button>
+                    <button
+                        id="mobilePlaySelectedCardButton"
+                        class="btn-play"
+                        :disabled="selectedCard === null || !canPlaySelected || playingCard"
+                        @click="playSelectedCard"
+                    >
+                        {{ playingCard ? t("playing") : t("playCard") }}
+                    </button>
+                    <button
+                        v-if="showDrawPenaltyButton"
+                        id="mobileDrawPenaltyButton"
+                        class="btn-primary mobile-penalty-button"
+                        :disabled="drawingPenalty"
+                        @click="drawPenaltyAction"
+                    >
+                        {{ drawPenaltyButtonText }}
+                    </button>
+                </div>
+
+                <div v-if="needsColorPick" class="mobile-color-actions" :aria-label="t('chooseColor')">
+                    <button class="btn-color-pick red" @click="pickColor('RED')">{{ colorName("RED") }}</button>
+                    <button class="btn-color-pick blue" @click="pickColor('BLUE')">{{ colorName("BLUE") }}</button>
+                    <button class="btn-color-pick green" @click="pickColor('GREEN')">{{ colorName("GREEN") }}</button>
+                    <button class="btn-color-pick yellow" @click="pickColor('YELLOW')">{{ colorName("YELLOW") }}</button>
+                </div>
+            </div>
+
+            <div class="action-buttons desktop-action-buttons" v-if="selectedCard !== null">
                 <button id="playSelectedCardButton" class="btn-play" :disabled="!canPlaySelected || playingCard" @click="playSelectedCard">
                     {{ playingCard ? t("playing") : t("playCard") }}
                 </button>
-                <button v-if="needsColorPick" class="btn-color-pick" @click="pickColor('RED')">{{ colorName("RED") }}</button>
+                <button v-if="needsColorPick" class="btn-color-pick red" @click="pickColor('RED')">{{ colorName("RED") }}</button>
                 <button v-if="needsColorPick" class="btn-color-pick blue" @click="pickColor('BLUE')">{{ colorName("BLUE") }}</button>
                 <button v-if="needsColorPick" class="btn-color-pick green" @click="pickColor('GREEN')">{{ colorName("GREEN") }}</button>
                 <button v-if="needsColorPick" class="btn-color-pick yellow" @click="pickColor('YELLOW')">{{ colorName("YELLOW") }}</button>
             </div>
 
-            <div v-if="showPenaltyNotice" class="penalty-panel">
+            <div v-if="showPenaltyNotice" class="penalty-panel desktop-penalty-panel">
                 <div class="penalty-text">{{ penaltyNoticeText }}</div>
                 <button
                     v-if="showDrawPenaltyButton"

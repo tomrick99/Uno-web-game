@@ -435,6 +435,10 @@
     margin-top: 15px;
 }
 
+.mobile-action-dock {
+    display: none;
+}
+
 .penalty-panel {
     display: flex;
     flex-direction: column;
@@ -556,6 +560,7 @@
     transition: all 0.3s;
 }
 
+.btn-color-pick.red,
 .btn-color-pick:nth-child(2) {
     background: #E74C3C;
     color: white;
@@ -835,5 +840,241 @@
 
     .help-section {
         font-size: 12px;
+    }
+}
+
+/* Persistent touch controls: keep the hand and turn actions inside the viewport. */
+@media (max-width: 1024px), (hover: none) and (pointer: coarse) {
+    #app {
+        min-height: 100svh;
+        padding-bottom: calc(220px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .my-hand-area {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 75;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 0 12px max(10px, env(safe-area-inset-bottom, 0px));
+        background: rgba(10, 15, 32, 0.96);
+        border-top-color: rgba(255, 255, 255, 0.2);
+        box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.45);
+        backdrop-filter: blur(16px);
+    }
+
+    .hand-cards {
+        min-height: 112px;
+        gap: 6px;
+        padding: 18px 2px 4px;
+        scroll-padding-inline: 12px;
+        scroll-snap-type: x proximity;
+        overscroll-behavior-x: contain;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .hand-cards .card {
+        width: 62px;
+        height: 94px;
+        padding: 6px;
+        scroll-snap-align: center;
+        touch-action: manipulation;
+    }
+
+    .hand-cards .card.playable:hover {
+        transform: none;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    }
+
+    .hand-cards .card.selected,
+    .hand-cards .card.selected:hover {
+        z-index: 2;
+        transform: translateY(-10px) scale(1.04);
+        border: 3px solid #ffd166;
+        outline: 2px solid rgba(255, 255, 255, 0.9);
+        outline-offset: 2px;
+        box-shadow: 0 0 28px rgba(243, 156, 18, 0.9);
+    }
+
+    .mobile-action-dock {
+        display: grid;
+        gap: 6px;
+        width: min(100%, 760px);
+        margin: 0 auto;
+    }
+
+    .mobile-action-status {
+        display: flex;
+        justify-content: center;
+        align-items: baseline;
+        gap: 8px;
+        min-width: 0;
+        color: var(--text-secondary);
+        font-size: 12px;
+        text-align: center;
+    }
+
+    .mobile-action-status.selected {
+        color: var(--yellow);
+        font-weight: 800;
+    }
+
+    .mobile-action-status.playable .mobile-action-status-hint {
+        color: var(--green);
+    }
+
+    .mobile-action-status-label,
+    .mobile-action-status-hint {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .mobile-action-status-hint {
+        color: var(--text-secondary);
+        font-weight: 600;
+    }
+
+    .mobile-primary-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+    }
+
+    .mobile-primary-actions button {
+        min-width: 0;
+        min-height: 48px;
+        padding: 10px 14px;
+        border-radius: 12px;
+        font-size: 15px;
+        font-weight: 800;
+        touch-action: manipulation;
+    }
+
+    .mobile-draw-button {
+        background: linear-gradient(135deg, var(--blue), #2471a3);
+        color: white;
+    }
+
+    .mobile-primary-actions button:disabled {
+        opacity: 0.48;
+        cursor: not-allowed;
+    }
+
+    .mobile-penalty-button {
+        grid-column: 1 / -1;
+    }
+
+    .mobile-penalty-text {
+        overflow: hidden;
+        color: var(--yellow);
+        font-size: 12px;
+        line-height: 1.25;
+        text-align: center;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .mobile-color-actions {
+        display: flex;
+        justify-content: center;
+        gap: 12px;
+    }
+
+    .mobile-color-actions .btn-color-pick {
+        width: 44px;
+        height: 44px;
+        min-width: 44px;
+        min-height: 44px;
+        font-size: 12px;
+        touch-action: manipulation;
+    }
+
+    .desktop-action-buttons,
+    .desktop-penalty-panel {
+        display: none;
+    }
+}
+
+@media (max-width: 600px) and (orientation: portrait) {
+    #app {
+        padding-bottom: calc(205px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .my-hand-area {
+        padding-inline: 8px;
+    }
+
+    .hand-cards {
+        min-height: 104px;
+        padding-top: 16px;
+    }
+
+    .hand-cards .card {
+        width: 58px;
+        height: 88px;
+    }
+
+    .mobile-action-status-hint {
+        display: none;
+    }
+}
+
+@media (max-width: 1024px) and (orientation: landscape) and (max-height: 820px),
+       (hover: none) and (pointer: coarse) and (orientation: landscape) and (max-height: 820px) {
+    #app {
+        padding-bottom: calc(132px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .my-hand-area {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(240px, 38vw);
+        align-items: center;
+        gap: 10px;
+        padding-top: 4px;
+    }
+
+    .hand-cards {
+        min-height: 106px;
+        padding: 16px 2px 2px;
+    }
+
+    .hand-cards .card {
+        width: 56px;
+        height: 84px;
+    }
+
+    .mobile-action-dock {
+        align-content: center;
+        width: 100%;
+    }
+
+    .mobile-action-status {
+        justify-content: flex-start;
+        text-align: left;
+    }
+
+    .mobile-action-status-hint,
+    .mobile-penalty-text {
+        display: none;
+    }
+
+    .mobile-primary-actions button {
+        min-height: 44px;
+        padding-block: 8px;
+    }
+
+    .mobile-color-actions {
+        gap: 8px;
+    }
+
+    .mobile-color-actions .btn-color-pick {
+        width: 40px;
+        height: 40px;
+        min-width: 40px;
+        min-height: 40px;
     }
 }
