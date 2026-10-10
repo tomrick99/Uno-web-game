@@ -1,9 +1,14 @@
 package com.uno.config;
 
+import com.uno.session.ActiveSessionRegistry;
+import com.uno.session.SessionPolicy;
+import com.uno.websocket.ActiveSessionChannelInterceptor;
+import com.uno.websocket.ActiveWebSocketSessionRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.server.ServletServerHttpRequest;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
@@ -35,6 +40,18 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Value("${spring.websocket.allowed-origin-patterns:http://localhost:*,http://127.0.0.1:*}")
     private String[] allowedOriginPatterns;
 
+    private final ActiveSessionRegistry activeSessions;
+    private final ActiveSessionChannelInterceptor activeSessionChannelInterceptor;
+    private final ActiveWebSocketSessionRegistry webSocketSessions;
+
+    public WebSocketConfig(ActiveSessionRegistry activeSessions,
+                           ActiveSessionChannelInterceptor activeSessionChannelInterceptor,
+                           ActiveWebSocketSessionRegistry webSocketSessions) {
+        this.activeSessions = activeSessions;
+        this.activeSessionChannelInterceptor = activeSessionChannelInterceptor;
+        this.webSocketSessions = webSocketSessions;
+    }
+
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
         config.enableSimpleBroker("/topic", "/queue");
@@ -53,12 +70,23 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                                                    WebSocketHandler wsHandler,
                                                    Map<String, Object> attributes) {
                         Object username = attributes.get("username");
+                        String httpSessionId = null;
                         if (username == null && request instanceof ServletServerHttpRequest servletRequest) {
                             var session = servletRequest.getServletRequest().getSession(false);
                             if (session != null) {
                                 username = session.getAttribute("username");
+                                httpSessionId = session.getId();
                             }
+                        } else if (request instanceof ServletServerHttpRequest servletRequest) {
+                            var session = servletRequest.getServletRequest().getSession(false);
+                            if (session != null) httpSessionId = session.getId();
                         }
+                        if (username == null || httpSessionId == null
+                                || !activeSessions.isActive(String.valueOf(username), httpSessionId)) {
+                            response.setStatusCode(HttpStatus.UNAUTHORIZED);
+                            return false;
+                        }
+                        attributes.put(SessionPolicy.HTTP_SESSION_ID_ATTRIBUTE, httpSessionId);
                         log.info("[WS] connect endpoint=/api/ws user={}", username != null ? username : "anonymous");
                         return true;
                     }
@@ -96,8 +124,14 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     }
 
     @Override
+    public void configureWebSocketTransport(
+            org.springframework.web.socket.config.annotation.WebSocketTransportRegistration registration) {
+        registration.addDecoratorFactory(webSocketSessions);
+    }
+
+    @Override
     public void configureClientInboundChannel(ChannelRegistration registration) {
-        registration.interceptors(new ChannelInterceptor() {
+        registration.interceptors(activeSessionChannelInterceptor, new ChannelInterceptor() {
             @Override
             public Message<?> preSend(Message<?> message, MessageChannel channel) {
                 StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);

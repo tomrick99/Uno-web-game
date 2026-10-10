@@ -5,6 +5,8 @@ import com.uno.dto.request.RegisterRequest;
 import com.uno.dto.response.ApiResponse;
 import com.uno.entity.User;
 import com.uno.service.UserService;
+import com.uno.session.ActiveSessionRegistry;
+import com.uno.session.SessionReplacementNotifier;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.web.bind.annotation.*;
 
@@ -13,9 +15,15 @@ import org.springframework.web.bind.annotation.*;
 public class UserController {
 
     private final UserService userService;
+    private final ActiveSessionRegistry activeSessions;
+    private final SessionReplacementNotifier replacementNotifier;
 
-    public UserController(UserService userService) {
+    public UserController(UserService userService,
+                          ActiveSessionRegistry activeSessions,
+                          SessionReplacementNotifier replacementNotifier) {
         this.userService = userService;
+        this.activeSessions = activeSessions;
+        this.replacementNotifier = replacementNotifier;
     }
 
     /**
@@ -42,6 +50,7 @@ public class UserController {
                 .map(user -> {
                     session.setAttribute("userId", user.getId());
                     session.setAttribute("username", user.getUsername());
+                    activeSessions.activate(user, session).ifPresent(replacementNotifier::notifyReplacement);
                     user.setPassword(null);
                     return ApiResponse.success("登录成功", user);
                 })
@@ -53,7 +62,7 @@ public class UserController {
      */
     @PostMapping("/logout")
     public ApiResponse<Void> logout(HttpSession session) {
-        session.invalidate();
+        activeSessions.deactivate(session);
         return ApiResponse.success("登出成功", null);
     }
 
@@ -63,7 +72,7 @@ public class UserController {
     @GetMapping("/me")
     public ApiResponse<User> getCurrentUser(HttpSession session) {
         Long userId = (Long) session.getAttribute("userId");
-        if (userId == null) {
+        if (userId == null || !activeSessions.isActive(userId, session.getId())) {
             return ApiResponse.error(401, "未登录");
         }
         return userService.findById(userId)

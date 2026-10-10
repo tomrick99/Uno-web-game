@@ -6,6 +6,8 @@ const RECONNECT_DELAY_MS = 3000;
 const FALLBACK_POLL_INTERVAL_MS = 5000;
 const WS_CONNECT_TIMEOUT_MS = 5000;
 const websocketEndpoint = "/api/ws";
+const sessionControl = window.UnoSessionControl || {};
+sessionControl.installAxiosInterceptor?.(axios);
 
 createApp({
     setup() {
@@ -72,6 +74,7 @@ createApp({
         const roomSubscription = ref(null);
         const gameSubscription = ref(null);
         const handSubscription = ref(null);
+        const sessionControlSubscription = ref(null);
         const subscribedGameId = ref(null);
 
         let reconnectTimer = null;
@@ -814,7 +817,7 @@ createApp({
             }
             pendingRealtimeBatch = null;
             lastGameStartConsistencyKey = null;
-            for (const subscription of [roomSubscription, gameSubscription, handSubscription]) {
+            for (const subscription of [roomSubscription, gameSubscription, handSubscription, sessionControlSubscription]) {
                 if (subscription.value) {
                     subscription.value.unsubscribe();
                     subscription.value = null;
@@ -1573,6 +1576,9 @@ createApp({
                     console.info("[UNO-GAME] ws connected");
                     subscribeRoomTopic();
                     if (gameId.value) subscribeGameChannels(gameId.value);
+                    if (!sessionControlSubscription.value && sessionControl.subscribe) {
+                        sessionControlSubscription.value = sessionControl.subscribe(stompClient.value);
+                    }
                     addLog(t("connected"));
                     if (resyncOnConnect) {
                         await joinAndLoad();
@@ -1629,6 +1635,10 @@ createApp({
                     },
                     onWebSocketError: handleConnectError,
                     onWebSocketClose: (event) => {
+                        if (sessionControl.handleSocketClose?.(event)) {
+                            resolveOnce(false);
+                            return;
+                        }
                         if (shouldReconnect && stompClient.value === client) {
                             console.warn("[UNO-GAME] websocket closed", event);
                             handleSocketDisconnected(client);

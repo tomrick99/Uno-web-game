@@ -1,5 +1,6 @@
 const { createApp, ref, reactive, onMounted, onUnmounted } = Vue;
 const apiBase = "/api";
+window.UnoSessionControl?.installAxiosInterceptor?.(axios);
 
 createApp({
     setup() {

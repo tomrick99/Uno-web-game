@@ -3,6 +3,8 @@ const apiBase = "/api";
 const realtimeUtils = window.UnoRealtimeUtils || {};
 const FALLBACK_THRESHOLD_MS = realtimeUtils.DEFAULT_FALLBACK_THRESHOLD_MS || 10000;
 const websocketEndpoint = "/api/ws";
+const sessionControl = window.UnoSessionControl || {};
+sessionControl.installAxiosInterceptor?.(axios);
 
 createApp({
     setup() {
@@ -21,6 +23,7 @@ createApp({
         const stompClient = ref(null);
         const lobbySubscription = ref(null);
         const lobbyActivitySubscription = ref(null);
+        const sessionControlSubscription = ref(null);
 
         let reconnectTimer = null;
         let fallbackActivationTimer = null;
@@ -199,6 +202,10 @@ createApp({
                 lobbyActivitySubscription.value.unsubscribe();
                 lobbyActivitySubscription.value = null;
             }
+            if (sessionControlSubscription.value) {
+                sessionControlSubscription.value.unsubscribe();
+                sessionControlSubscription.value = null;
+            }
             if (stompClient.value) {
                 try {
                     if (typeof stompClient.value.deactivate === "function") {
@@ -254,6 +261,9 @@ createApp({
                         console.error(error);
                     }
                 });
+            }
+            if (!sessionControlSubscription.value && sessionControl.subscribe) {
+                sessionControlSubscription.value = sessionControl.subscribe(stompClient.value);
             }
         };
 
@@ -339,6 +349,7 @@ createApp({
                     onStompError: handleConnectError,
                     onWebSocketError: handleConnectError,
                     onWebSocketClose: (event) => {
+                        if (sessionControl.handleSocketClose?.(event)) return;
                         if (shouldReconnect && wsConnected.value) {
                             console.warn("[UNO-LOBBY] ws closed", event);
                             handleSocketDisconnected();

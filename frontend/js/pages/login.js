@@ -6,6 +6,8 @@ createApp({
         const isRegister = ref(false);
         const errorMsg = ref("");
         const successMsg = ref("");
+        const replacementNotice = window.UnoSessionControl?.consumeNotice?.();
+        if (replacementNotice) errorMsg.value = replacementNotice;
 
         const loginForm = reactive({ username: "", password: "" });
         const registerForm = reactive({ username: "", password: "" });
