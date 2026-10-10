@@ -6,6 +6,7 @@ import com.uno.dto.response.ApiResponse;
 import com.uno.entity.Room;
 import com.uno.entity.User;
 import com.uno.service.GameService;
+import com.uno.service.LobbyActivityNotificationService;
 import com.uno.service.RoomService;
 import com.uno.service.UserService;
 import com.uno.websocket.GameWebSocketService;
@@ -32,15 +33,18 @@ public class RoomController {
     private final UserService userService;
     private final GameService gameService;
     private final GameWebSocketService wsService;
+    private final LobbyActivityNotificationService lobbyActivityNotificationService;
 
     public RoomController(RoomService roomService,
                           UserService userService,
                           GameService gameService,
-                          GameWebSocketService wsService) {
+                          GameWebSocketService wsService,
+                          LobbyActivityNotificationService lobbyActivityNotificationService) {
         this.roomService = roomService;
         this.userService = userService;
         this.gameService = gameService;
         this.wsService = wsService;
+        this.lobbyActivityNotificationService = lobbyActivityNotificationService;
     }
 
     private User getCurrentUser(HttpSession session) {
@@ -66,9 +70,10 @@ public class RoomController {
                     safeRequest.getTotalRounds(),
                     safeRequest.getRoundTimeLimitMinutes(),
                     safeRequest.getGameMode());
-            gameService.joinGame(room.getId(), user.getId());
+            gameService.joinGame(room.getId(), user.getId(), false);
             Map<String, Object> roomState = roomService.getRoomState(room.getId());
-            wsService.broadcastLobbyRoomState(roomState, "ROOM_CREATED", "Room created");
+            wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", null);
+            lobbyActivityNotificationService.notifyRoomActivity(roomState, "ROOM_CREATED", user);
             return ApiResponse.success("Room created", roomState);
         } catch (IllegalArgumentException e) {
             return ApiResponse.error(400, e.getMessage());

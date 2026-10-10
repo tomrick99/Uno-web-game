@@ -2,6 +2,7 @@ package com.uno.websocket;
 
 import com.uno.dto.realtime.PrivateHandPatch;
 import com.uno.dto.realtime.PublicGamePatch;
+import com.uno.entity.User;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -9,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class GameWebSocketService {
@@ -68,6 +70,32 @@ public class GameWebSocketService {
         }
 
         log.info("[LOBBY] broadcast type={} roomId={}", event, roomId);
+        timedSend(LOBBY_TOPIC, payload, roomId, event);
+    }
+
+    public void broadcastLobbyActivityNotification(Map<String, Object> roomState,
+                                                   String event,
+                                                   User actor,
+                                                   Set<Long> excludedUserIds) {
+        Object roomId = roomState.get("roomId");
+        Object roomCode = roomState.get("roomCode");
+        Map<String, Object> actorInfo = new LinkedHashMap<>();
+        actorInfo.put("userId", actor.getId());
+        actorInfo.put("username", actor.getUsername());
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("type", "LOBBY_ACTIVITY");
+        payload.put("event", event);
+        payload.put("roomId", roomId);
+        payload.put("roomCode", roomCode);
+        payload.put("roomState", roomState);
+        payload.put("actor", actorInfo);
+        payload.put("excludedUserIds", excludedUserIds);
+        payload.put("timestamp", System.currentTimeMillis());
+        payload.put("message", buildLobbyActivityMessage(event, actor.getUsername(), roomCode, roomId));
+
+        log.info("[LOBBY] broadcast activity={} roomId={} excludedUserIds={}",
+                event, roomId, excludedUserIds);
         timedSend(LOBBY_TOPIC, payload, roomId, event);
     }
 
@@ -172,5 +200,16 @@ public class GameWebSocketService {
                 username,
                 event,
                 costMs);
+    }
+
+    private String buildLobbyActivityMessage(String event, String actorUsername, Object roomCode, Object roomId) {
+        String roomLabel = roomCode != null ? String.valueOf(roomCode) : String.valueOf(roomId);
+        if ("ROOM_CREATED".equals(event)) {
+            return actorUsername + " created room " + roomLabel;
+        }
+        if ("PLAYER_JOINED".equals(event)) {
+            return actorUsername + " joined room " + roomLabel;
+        }
+        return actorUsername + " updated room " + roomLabel;
     }
 }

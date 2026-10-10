@@ -15,6 +15,7 @@ createApp({
         const language = ref(localStorage.getItem("unoLanguage") || "zh");
         const errorMsg = ref("");
         const infoMsg = ref("");
+        const activityMsg = ref("");
         const connectionMode = ref("reconnecting");
         const wsConnected = ref(false);
 
@@ -56,7 +57,9 @@ createApp({
                 connected: "实时已连接",
                 reconnecting: "正在重连",
                 fallback: "实时断开，轮询中",
-                syncStatus: "同步状态"
+                syncStatus: "同步状态",
+                roomCreatedActivity: "{player} 创建了房间 {room}",
+                playerJoinedActivity: "{player} 加入了房间 {room}"
             },
             en: {
                 admin: "Admin",
@@ -84,7 +87,9 @@ createApp({
                 connected: "Realtime connected",
                 reconnecting: "Reconnecting",
                 fallback: "Fallback polling",
-                syncStatus: "Sync"
+                syncStatus: "Sync",
+                roomCreatedActivity: "{player} created room {room}",
+                playerJoinedActivity: "{player} joined room {room}"
             }
         };
 
@@ -217,12 +222,40 @@ createApp({
                     payload = JSON.parse(message.body || "{}");
                 } catch (error) {
                     console.error(error);
+                    return;
                 }
                 const event = {
                     type: payload.event || payload.type,
                     roomId: payload.roomId
                 };
                 console.info("[UNO-LOBBY] lobby event received", event.type, event.roomId);
+                if (payload.type === "LOBBY_ACTIVITY") {
+                    queueRoomsRefresh(300);
+                    const currentUserId = String(localStorage.getItem("userId") || "");
+                    const actorUserId = String(payload.actor?.userId || "");
+                    const excludedUserIds = (payload.excludedUserIds || []).map(String);
+                    if (actorUserId === currentUserId || excludedUserIds.includes(currentUserId)) {
+                        return;
+                    }
+
+                    const player = payload.actor?.username || t("unknown");
+                    const room = payload.roomCode || payload.roomState?.roomCode || payload.roomId || t("unknown");
+                    const template = payload.event === "ROOM_CREATED"
+                        ? t("roomCreatedActivity")
+                        : payload.event === "PLAYER_JOINED"
+                            ? t("playerJoinedActivity")
+                            : payload.message;
+                    if (!template) return;
+
+                    const notice = template
+                        .replace("{player}", player)
+                        .replace("{room}", room);
+                    activityMsg.value = notice;
+                    setTimeout(() => {
+                        if (activityMsg.value === notice) activityMsg.value = "";
+                    }, 5000);
+                    return;
+                }
                 if (event.type === "ROOM_REMOVED") {
                     removeRoomLocally(event.roomId);
                 }
@@ -482,6 +515,7 @@ createApp({
             language,
             errorMsg,
             infoMsg,
+            activityMsg,
             wsConnected,
             connectionMode,
             connectionLabel,

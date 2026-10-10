@@ -299,6 +299,11 @@
     color: white;
 }
 
+.toast.lobby-activity-toast {
+    top: 76px;
+    z-index: 201;
+}
+
 @media (max-width: 640px) {
     .top-bar,
     .lobby-header,

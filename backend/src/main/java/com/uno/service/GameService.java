@@ -22,6 +22,7 @@ import com.uno.repository.UserRepository;
 import com.uno.websocket.GameWebSocketService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -63,8 +64,26 @@ public class GameService {
     private final UserRepository userRepository;
     private final GameWebSocketService wsService;
     private final RoomService roomService;
+    private final LobbyActivityNotificationService lobbyActivityNotificationService;
     private final ConcurrentHashMap<Long, ReentrantLock> roomLocks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, AtomicLong> roomStateVersions = new ConcurrentHashMap<>();
+
+    @Autowired
+    public GameService(GameRepository gameRepository,
+                       GamePlayerRepository gamePlayerRepository,
+                       RoomRepository roomRepository,
+                       UserRepository userRepository,
+                       GameWebSocketService wsService,
+                       RoomService roomService,
+                       LobbyActivityNotificationService lobbyActivityNotificationService) {
+        this.gameRepository = gameRepository;
+        this.gamePlayerRepository = gamePlayerRepository;
+        this.roomRepository = roomRepository;
+        this.userRepository = userRepository;
+        this.wsService = wsService;
+        this.roomService = roomService;
+        this.lobbyActivityNotificationService = lobbyActivityNotificationService;
+    }
 
     public GameService(GameRepository gameRepository,
                        GamePlayerRepository gamePlayerRepository,
@@ -72,16 +91,15 @@ public class GameService {
                        UserRepository userRepository,
                        GameWebSocketService wsService,
                        RoomService roomService) {
-        this.gameRepository = gameRepository;
-        this.gamePlayerRepository = gamePlayerRepository;
-        this.roomRepository = roomRepository;
-        this.userRepository = userRepository;
-        this.wsService = wsService;
-        this.roomService = roomService;
+        this(gameRepository, gamePlayerRepository, roomRepository, userRepository, wsService, roomService, null);
     }
 
     public Map<String, Object> joinGame(Long roomId, Long userId) {
-        return withRoomLock(roomId, () -> doJoinGame(roomId, userId));
+        return joinGame(roomId, userId, true);
+    }
+
+    public Map<String, Object> joinGame(Long roomId, Long userId, boolean announceLobbyActivity) {
+        return withRoomLock(roomId, () -> doJoinGame(roomId, userId, announceLobbyActivity));
     }
 
     public Map<String, Object> playCard(Long gameId, Long userId, int cardIndex, CardColor chosenColor) {
@@ -302,7 +320,7 @@ public class GameService {
         }
     }
 
-    private Map<String, Object> doJoinGame(Long roomId, Long userId) {
+    private Map<String, Object> doJoinGame(Long roomId, Long userId, boolean announceLobbyActivity) {
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
         User user = userRepository.findById(userId)
@@ -313,6 +331,7 @@ public class GameService {
                 .orElseGet(() -> createWaitingGame(room));
 
         Optional<GamePlayer> existingPlayer = gamePlayerRepository.findByGameAndUser(game, user);
+        boolean playerAdded = existingPlayer.isEmpty();
         if (existingPlayer.isEmpty()) {
             if (room.getStatus() != RoomStatus.WAITING || game.getStatus() == GameStatus.FINISHED) {
                 throw new IllegalArgumentException("房间已开始或已结束，无法加入");
@@ -337,7 +356,9 @@ public class GameService {
 
             Map<String, Object> roomState = getRoomStateWithVersion(room, game);
             wsService.broadcastRoomState(roomState, "PLAYER_JOINED", user.getUsername() + " joined the room");
-            wsService.broadcastLobbyRoomState(roomState, "PLAYER_JOINED", user.getUsername() + " joined the room");
+            if (announceLobbyActivity) {
+                wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", null);
+            }
         }
 
         int currentPlayerCount = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game).size();
@@ -359,6 +380,14 @@ public class GameService {
             Map<String, Object> roomState = getRoomStateWithVersion(room, game);
             wsService.broadcastRoomState(roomState, "PLAYER_SYNC", null);
             wsService.broadcastLobbyRoomState(roomState, "ROOM_UPDATED", null);
+        }
+
+        // Keep the activity event last. A join can immediately start the game and publish another
+        // lobby update; older clients render both through the same toast and would otherwise hide
+        // the join notification before a user can see it.
+        if (playerAdded && announceLobbyActivity && lobbyActivityNotificationService != null) {
+            lobbyActivityNotificationService.notifyRoomActivity(
+                    getRoomStateWithVersion(room, game), "PLAYER_JOINED", user);
         }
 
         return buildRealtimeSnapshot(room.getId(), game.getId(), userId);

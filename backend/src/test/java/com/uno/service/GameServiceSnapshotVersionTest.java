@@ -231,6 +231,7 @@ class GameServiceSnapshotVersionTest {
         RecordingTemplate template = new RecordingTemplate();
         GameWebSocketService wsService = new GameWebSocketService(template);
         RoomService roomService = new RoomService(roomRepository, gameRepository, gamePlayerRepository);
+        LobbyActivityNotificationService notificationService = mock(LobbyActivityNotificationService.class);
 
         GameService gameService = new GameService(
                 gameRepository,
@@ -238,7 +239,8 @@ class GameServiceSnapshotVersionTest {
                 roomRepository,
                 userRepository,
                 wsService,
-                roomService
+                roomService,
+                notificationService
         );
 
         User alice = buildUser(1L, "alice");
@@ -273,12 +275,13 @@ class GameServiceSnapshotVersionTest {
         assertTrue(template.sentDestinations.contains("/topic/lobby"));
         Map<?, ?> lobbyPayload = template.lastPayloadFor("/topic/lobby");
         assertEquals("LOBBY_EVENT", lobbyPayload.get("type"));
-        assertEquals("PLAYER_JOINED", lobbyPayload.get("event"));
+        assertEquals("ROOM_UPDATED", lobbyPayload.get("event"));
         assertEquals(30L, lobbyPayload.get("roomId"));
         @SuppressWarnings("unchecked")
         Map<String, Object> roomState = (Map<String, Object>) lobbyPayload.get("roomState");
         assertEquals(2, roomState.get("playerCount"));
         assertTrue(((Number) roomState.get("version")).longValue() > versionBeforeJoin);
+        verify(notificationService).notifyRoomActivity(roomState, "PLAYER_JOINED", bob);
     }
 
     @Test

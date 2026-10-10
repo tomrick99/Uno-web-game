@@ -9,7 +9,7 @@
     <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.6.1/dist/sockjs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
     <link rel="stylesheet" href="css/common.css">
-    <link rel="stylesheet" href="css/lobby.css">
+    <link rel="stylesheet" href="css/lobby.css?v=sc2-c1-r3">
 </head>
 <body>
     <div id="app" v-cloak>
@@ -95,9 +95,10 @@
 
         <div v-if="errorMsg" class="toast error">{{ errorMsg }}</div>
         <div v-if="infoMsg" class="toast info">{{ infoMsg }}</div>
+        <div v-if="activityMsg" class="toast info lobby-activity-toast">{{ activityMsg }}</div>
     </div>
 
     <script src="js/pages/realtime-utils.js"></script>
-    <script src="js/pages/lobby.js"></script>
+    <script src="js/pages/lobby.js?v=sc2-c1-r3"></script>
 </body>
 </html>

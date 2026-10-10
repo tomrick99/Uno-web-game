@@ -7,6 +7,7 @@ import com.uno.entity.User;
 import com.uno.entity.enums.GameMode;
 import com.uno.entity.enums.RoomStatus;
 import com.uno.service.GameService;
+import com.uno.service.LobbyActivityNotificationService;
 import com.uno.service.RoomService;
 import com.uno.service.UserService;
 import com.uno.websocket.GameWebSocketService;
@@ -20,6 +21,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class RoomControllerTest {
@@ -48,7 +50,9 @@ class RoomControllerTest {
         FakeUserService userService = new FakeUserService(host);
         FakeGameService gameService = new FakeGameService();
         FakeWebSocketService wsService = new FakeWebSocketService();
-        RoomController controller = new RoomController(roomService, userService, gameService, wsService);
+        LobbyActivityNotificationService notificationService = mock(LobbyActivityNotificationService.class);
+        RoomController controller = new RoomController(
+                roomService, userService, gameService, wsService, notificationService);
 
         when(session.getAttribute("userId")).thenReturn(7L);
 
@@ -64,9 +68,11 @@ class RoomControllerTest {
         assertEquals(1, response.getData().get("playerCount"));
         assertEquals(42L, gameService.joinedRoomId);
         assertEquals(7L, gameService.joinedUserId);
+        assertEquals(false, gameService.announcedLobbyActivity);
         assertTrue(wsService.lobbyBroadcasted);
-        assertEquals("ROOM_CREATED", wsService.lastEvent);
+        assertEquals("ROOM_UPDATED", wsService.lastEvent);
         assertEquals(roomState, wsService.lastRoomState);
+        verify(notificationService).notifyRoomActivity(roomState, "ROOM_CREATED", host);
     }
 
     private static final class FakeRoomService extends RoomService {
@@ -107,15 +113,17 @@ class RoomControllerTest {
     private static final class FakeGameService extends GameService {
         private Long joinedRoomId;
         private Long joinedUserId;
+        private boolean announcedLobbyActivity;
 
         private FakeGameService() {
             super(null, null, null, null, null, null);
         }
 
         @Override
-        public Map<String, Object> joinGame(Long roomId, Long userId) {
+        public Map<String, Object> joinGame(Long roomId, Long userId, boolean announceLobbyActivity) {
             joinedRoomId = roomId;
             joinedUserId = userId;
+            announcedLobbyActivity = announceLobbyActivity;
             return Map.of();
         }
     }

@@ -3,6 +3,7 @@ package com.uno.websocket;
 import com.uno.dto.realtime.PrivateHandPatch;
 import com.uno.dto.realtime.PublicGamePatch;
 import com.uno.dto.realtime.PublicPlayerInfo;
+import com.uno.entity.User;
 import org.junit.jupiter.api.Test;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -53,6 +54,35 @@ class GameWebSocketServiceTest {
         assertEquals("LOBBY_EVENT", payload.get("type"));
         assertEquals("ROOM_REMOVED", payload.get("event"));
         assertEquals(12L, payload.get("roomId"));
+        assertTrue(payload.get("timestamp") instanceof Long);
+    }
+
+    @Test
+    void lobbyActivityUsesLobbyTopicAndIncludesRoomActorAndExclusions() {
+        RecordingTemplate template = new RecordingTemplate();
+        GameWebSocketService service = new GameWebSocketService(template);
+        User actor = new User();
+        actor.setId(7L);
+        actor.setUsername("alice");
+        Map<String, Object> roomState = Map.of(
+                "roomId", 12L,
+                "roomCode", "ABC123",
+                "playerCount", 1);
+
+        service.broadcastLobbyActivityNotification(roomState, "ROOM_CREATED", actor, java.util.Set.of(7L, 9L));
+
+        assertEquals("/topic/lobby", template.destination);
+        assertNull(template.user);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) template.payload;
+        assertEquals("LOBBY_ACTIVITY", payload.get("type"));
+        assertEquals("ROOM_CREATED", payload.get("event"));
+        assertEquals(12L, payload.get("roomId"));
+        assertEquals("ABC123", payload.get("roomCode"));
+        assertEquals(roomState, payload.get("roomState"));
+        assertEquals(Map.of("userId", 7L, "username", "alice"), payload.get("actor"));
+        assertEquals(java.util.Set.of(7L, 9L), payload.get("excludedUserIds"));
+        assertEquals("alice created room ABC123", payload.get("message"));
         assertTrue(payload.get("timestamp") instanceof Long);
     }
 
