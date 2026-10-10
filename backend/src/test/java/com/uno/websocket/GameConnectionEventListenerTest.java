@@ -13,6 +13,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -52,6 +53,21 @@ class GameConnectionEventListenerTest {
         fixture.runPendingChecks();
 
         verify(fixture.gameService, never()).playerDisconnected(anyString());
+    }
+
+    @Test
+    void samePrincipalOnNewGameSessionIsReportedAsTheReturningPlayer() {
+        ListenerFixture fixture = fixture();
+        fixture.listener.registerConnectedSession("alice-before-drop", "alice");
+        fixture.listener.registerGameSubscription("alice-before-drop");
+        fixture.listener.registerDisconnectedSession("alice-before-drop");
+        fixture.runPendingChecks();
+        verify(fixture.gameService).playerDisconnected("alice");
+
+        fixture.listener.registerConnectedSession("alice-after-drop", "alice");
+        fixture.listener.registerGameSubscription("alice-after-drop");
+
+        verify(fixture.gameService, times(2)).playerConnected("alice");
     }
 
     @SuppressWarnings("unchecked")

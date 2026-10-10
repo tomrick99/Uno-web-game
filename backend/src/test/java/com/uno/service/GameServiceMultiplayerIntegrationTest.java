@@ -31,6 +31,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -298,6 +299,80 @@ class GameServiceMultiplayerIntegrationTest {
         assertEquals(0, penaltyPatch.pendingPenalty());
         assertEquals(PendingDrawType.NONE.name(), penaltyPatch.pendingDrawType());
         assertEquals(3, penaltyPatch.players().get(0).handCount());
+    }
+
+    @Test
+    void reconnectRestoresOriginalIdentityMembershipHandSeatAndTurnWithoutDuplicatePlayer() {
+        Fixture fixture = createGame(List.of(
+                List.of(number(CardColor.RED, 1), number(CardColor.BLUE, 1)),
+                List.of(number(CardColor.RED, 2), number(CardColor.BLUE, 2)),
+                List.of(number(CardColor.RED, 3), number(CardColor.BLUE, 3))
+        ), drawPile(12));
+        Game originalGame = gameRepository.findById(fixture.gameId()).orElseThrow();
+        Long roomId = originalGame.getRoom().getId();
+        User reconnectingUser = userRepository.findById(fixture.userId(1)).orElseThrow();
+        GamePlayer originalPlayer = gamePlayerRepository.findByGameAndUser(originalGame, reconnectingUser).orElseThrow();
+        Long originalGamePlayerId = originalPlayer.getId();
+        int originalSeat = originalPlayer.getSeatIndex();
+        List<Card> originalHand = originalPlayer.getHandCards();
+        String originalHandJson = originalPlayer.getHandCardsJson();
+        Long originalTurn = originalGame.getCurrentTurn();
+        boolean originalDirection = originalGame.isClockwise();
+        CardColor originalColor = originalGame.getCurrentColor();
+        int originalPendingDrawCount = originalGame.getPendingDrawCount();
+        PendingDrawType originalPendingDrawType = originalGame.getPendingDrawType();
+        Long originalLastPenaltyPlayerId = originalGame.getLastPenaltyPlayerId();
+        String originalDrawPile = originalGame.getDrawPileJson();
+        String originalDiscardPile = originalGame.getDiscardPileJson();
+        List<String> allHandsBefore = gamePlayerRepository.findByGameOrderBySeatIndexAsc(originalGame).stream()
+                .map(GamePlayer::getHandCardsJson)
+                .toList();
+
+        gameService.playerDisconnected(reconnectingUser.getUsername(), System.currentTimeMillis());
+        assertTrue((Boolean) gameService.getGameState(fixture.gameId()).get("disconnectGraceActive"));
+
+        Map<String, Object> restoredSnapshot = gameService.reconnectPlayer(roomId, reconnectingUser.getId());
+
+        Game restoredGame = gameRepository.findById(fixture.gameId()).orElseThrow();
+        List<GamePlayer> restoredPlayers = gamePlayerRepository.findByGameOrderBySeatIndexAsc(restoredGame);
+        GamePlayer restoredPlayer = gamePlayerRepository.findByGameAndUser(restoredGame, reconnectingUser).orElseThrow();
+        assertEquals(3, restoredPlayers.size());
+        assertEquals(3L, restoredPlayers.stream().map(player -> player.getUser().getId()).distinct().count());
+        assertEquals(originalGamePlayerId, restoredPlayer.getId());
+        assertEquals(originalSeat, restoredPlayer.getSeatIndex());
+        assertEquals(originalHandJson, restoredPlayer.getHandCardsJson());
+        assertEquals(roomId, restoredPlayer.getGame().getRoom().getId());
+        assertEquals(GameStatus.PLAYING, restoredGame.getStatus());
+        assertEquals(RoomStatus.PLAYING, restoredGame.getRoom().getStatus());
+        assertEquals(originalTurn, restoredGame.getCurrentTurn());
+        assertEquals(originalDirection, restoredGame.isClockwise());
+        assertEquals(originalColor, restoredGame.getCurrentColor());
+        assertEquals(originalPendingDrawCount, restoredGame.getPendingDrawCount());
+        assertEquals(originalPendingDrawType, restoredGame.getPendingDrawType());
+        assertEquals(originalLastPenaltyPlayerId, restoredGame.getLastPenaltyPlayerId());
+        assertEquals(originalDrawPile, restoredGame.getDrawPileJson());
+        assertEquals(originalDiscardPile, restoredGame.getDiscardPileJson());
+        assertEquals(allHandsBefore, restoredPlayers.stream().map(GamePlayer::getHandCardsJson).toList());
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> restoredIdentity = (Map<String, Object>) restoredSnapshot.get("restoredPlayer");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> restoredGameState = (Map<String, Object>) restoredSnapshot.get("gameState");
+        assertEquals(true, restoredSnapshot.get("reconnected"));
+        assertEquals(originalGamePlayerId, restoredIdentity.get("gamePlayerId"));
+        assertEquals(reconnectingUser.getId(), restoredIdentity.get("userId"));
+        assertEquals(originalSeat, restoredIdentity.get("seatIndex"));
+        assertEquals(false, restoredGameState.get("disconnectGraceActive"));
+        assertEquals(originalTurn, restoredGameState.get("currentTurn"));
+        assertEquals(originalHand.size(), ((List<?>) restoredSnapshot.get("handCards")).size());
+        assertEquals("PLAYER_RECONNECTED", lastPublicPatch().type());
+        PrivateHandPatch restoredHandPatch = privateHandPatches.get(privateHandPatches.size() - 1);
+        assertEquals("HAND_RESTORED", restoredHandPatch.type());
+        assertEquals(reconnectingUser.getId(), restoredHandPatch.userId());
+        assertEquals(originalHand.size(), restoredHandPatch.handCards().size());
+
+        gameService.playCard(fixture.gameId(), fixture.userId(0), 0, null);
+        assertEquals(fixture.userId(1), gameRepository.findById(fixture.gameId()).orElseThrow().getCurrentTurn());
     }
 
     private long assertPatch(PublicGamePatch patch,

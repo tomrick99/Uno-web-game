@@ -148,6 +148,10 @@ public class GameService {
         return withRoomLock(roomId, () -> doContinueWithoutDisconnectedPlayer(gameId, userId));
     }
 
+    public Map<String, Object> reconnectPlayer(Long roomId, Long userId) {
+        return withRoomLock(roomId, () -> doReconnectPlayer(roomId, userId));
+    }
+
     public void playerConnected(String username) {
         if (username == null || username.isBlank()) {
             return;
@@ -554,6 +558,47 @@ public class GameService {
         if (game != null && game.getRoom() != null && disconnectGraceByRoom.containsKey(game.getRoom().getId())) {
             throw new IllegalArgumentException("Game is paused while waiting for a disconnected player");
         }
+    }
+
+    private Map<String, Object> doReconnectPlayer(Long roomId, Long userId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
+        Game game = gameRepository.findByRoom(room).stream()
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
+        GamePlayer existingPlayer = gamePlayerRepository.findByGameAndUser(game, user)
+                .orElseThrow(() -> new IllegalArgumentException("Player is no longer in this game"));
+
+        DisconnectGrace grace = disconnectGraceByRoom.get(roomId);
+        if (grace != null
+                && grace.gameId().equals(game.getId())
+                && grace.disconnectedPlayerId().equals(userId)) {
+            resumeAfterReconnect(grace);
+        }
+
+        Map<String, Object> snapshot = buildRealtimeSnapshot(roomId, game.getId(), userId);
+        Map<String, Object> restoredPlayer = new LinkedHashMap<>();
+        restoredPlayer.put("gamePlayerId", existingPlayer.getId());
+        restoredPlayer.put("userId", user.getId());
+        restoredPlayer.put("username", user.getUsername());
+        restoredPlayer.put("seatIndex", existingPlayer.getSeatIndex());
+        snapshot.put("reconnected", true);
+        snapshot.put("restoredPlayer", restoredPlayer);
+
+        PrivateHandPatchDelivery restoredHand = buildPrivateHandPatchDelivery(
+                game, existingPlayer, "HAND_RESTORED");
+        publishAfterCommit("reconnectPlayer", () -> sendPrivateHandPatch(restoredHand));
+        log.info("[RECONNECT] action=stateRestored roomId={} gameId={} gamePlayerId={} userId={} seatIndex={} handCount={} currentTurn={}",
+                roomId,
+                game.getId(),
+                existingPlayer.getId(),
+                userId,
+                existingPlayer.getSeatIndex(),
+                existingPlayer.getHandCards().size(),
+                game.getCurrentTurn());
+        return snapshot;
     }
 
     private Map<String, Object> doJoinGame(Long roomId, Long userId) {

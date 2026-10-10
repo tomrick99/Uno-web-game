@@ -651,6 +651,26 @@ createApp({
             }
         };
 
+        const stopGraceClock = () => {
+            if (graceClockTimer) {
+                clearInterval(graceClockTimer);
+                graceClockTimer = null;
+            }
+        };
+
+        const syncGraceClock = () => {
+            if (!disconnectGraceActive.value) {
+                stopGraceClock();
+                return;
+            }
+            graceClock.value = Date.now();
+            if (!graceClockTimer) {
+                graceClockTimer = setInterval(() => {
+                    graceClock.value = Date.now();
+                }, 250);
+            }
+        };
+
         const refreshHandPlayability = () => {
             handCards.value = sortHandCards(handCards.value).map(decorateCard);
             if (selectedCard.value === null) return;
@@ -784,6 +804,7 @@ createApp({
             autoPenaltyInProgress.value = false;
             lastAutoPenaltyKey.value = "";
             clearAutoPenaltyTimer();
+            syncGraceClock();
         };
 
         const storeLobbyNotice = (message) => {
@@ -1145,6 +1166,7 @@ createApp({
                 eligibleContinuePlayerIds.value = [];
                 continueVoteSubmitting.value = false;
             }
+            syncGraceClock();
             if (hasOwnField(gameState, "drawPileSize")) drawPileSize.value = Number(gameState.drawPileSize ?? 0);
             if (hasOwnField(gameState, "topCard") && gameState.topCard) {
                 topCard.value = {
@@ -1357,6 +1379,32 @@ createApp({
                     console.error(`[UNO-SYNC] refresh failed reason=${reason}`, error);
                 }
             }
+        };
+
+        const restoreAfterReconnect = async () => {
+            if (!roomId.value) return false;
+            const response = await axios.post(`${apiBase}/game/room/${roomId.value}/reconnect`);
+            if (response.data.code === 200 && response.data.data) {
+                const snapshot = response.data.data;
+                console.info(`[UNO-RECONNECT] restored player=${snapshot.restoredPlayer?.userId ?? "unknown"} gamePlayer=${snapshot.restoredPlayer?.gamePlayerId ?? "unknown"} seat=${snapshot.restoredPlayer?.seatIndex ?? "unknown"}`);
+                renderSnapshot(snapshot);
+                return true;
+            }
+            if (response.data.code === 400) {
+                storeLobbyNotice(response.data.message || (language.value === "zh" ? "你已不在该游戏中" : "You are no longer in this game"));
+                shouldReconnect = false;
+                cleanupRealtime();
+                resetLocalState();
+                window.location.replace("lobby.html");
+                return true;
+            }
+            if (response.data.code === 401) {
+                shouldReconnect = false;
+                cleanupRealtime();
+                window.location.replace("index.html");
+                return true;
+            }
+            throw new Error(response.data.message || "Failed to restore player state");
         };
 
         const updateConnectionMode = () => {
@@ -1574,8 +1622,13 @@ createApp({
                     subscribeRoomTopic();
                     if (gameId.value) subscribeGameChannels(gameId.value);
                     addLog(t("connected"));
-                    if (resyncOnConnect) {
-                        await refreshFromServer({ reason: "ws-connected" });
+                    if (resyncOnConnect && gameId.value) {
+                        try {
+                            await restoreAfterReconnect();
+                        } catch (error) {
+                            console.error("[UNO-RECONNECT] state restore failed; falling back to snapshot", error);
+                            await refreshFromServer({ reason: "ws-reconnect-restore-fallback" });
+                        }
                     }
                     resolveOnce(true);
                 };
@@ -1860,10 +1913,6 @@ createApp({
             window.addEventListener("beforeunload", beforeUnloadHandler);
             delegatedButtonHandler = handleDelegatedButtonClick;
             document.addEventListener("click", delegatedButtonHandler);
-            graceClockTimer = setInterval(() => {
-                graceClock.value = Date.now();
-            }, 250);
-
             shouldReconnect = true;
             connectWebSocket({ resyncOnConnect: false }).then((connected) => {
                 if (!connected && !wsConnected.value) {
@@ -1880,10 +1929,7 @@ createApp({
             shouldReconnect = false;
             cleanupRealtime();
             clearAutoPenaltyTimer();
-            if (graceClockTimer) {
-                clearInterval(graceClockTimer);
-                graceClockTimer = null;
-            }
+            stopGraceClock();
             if (beforeUnloadHandler) window.removeEventListener("beforeunload", beforeUnloadHandler);
             if (delegatedButtonHandler) document.removeEventListener("click", delegatedButtonHandler);
         });
