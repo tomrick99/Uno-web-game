@@ -28,6 +28,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -62,7 +63,82 @@ class GameServiceDisconnectGraceTest {
     }
 
     @Test
-    void reconnectDuringGraceResumesWithoutRemovingPlayer() {
+    void reconnectDuringGraceRestoresOriginalPlayerAndCompleteSnapshot() {
+        Fixture fixture = fixture();
+        fixture.game.setCurrentTurn(fixture.bob.getId());
+        String originalHandJson = fixture.bobPlayer.getHandCardsJson();
+        String aliceHandJson = fixture.alicePlayer.getHandCardsJson();
+        String charlieHandJson = fixture.charliePlayer.getHandCardsJson();
+        String originalDrawPileJson = fixture.game.getDrawPileJson();
+        String originalDiscardPileJson = fixture.game.getDiscardPileJson();
+        CardColor originalColor = fixture.game.getCurrentColor();
+        boolean originalDirection = fixture.game.isClockwise();
+        int originalPendingDrawCount = fixture.game.getPendingDrawCount();
+        PendingDrawType originalPendingDrawType = fixture.game.getPendingDrawType();
+        int originalSeatIndex = fixture.bobPlayer.getSeatIndex();
+        Long originalPlayerId = fixture.bobPlayer.getId();
+        fixture.service.playerDisconnected("bob", System.currentTimeMillis());
+
+        Map<String, Object> snapshot = fixture.service.reconnectPlayer(fixture.room.getId(), fixture.bob.getId());
+
+        assertFalse(fixture.service.hasActiveDisconnectGrace(fixture.room.getId()));
+        verify(fixture.playerRepository, never()).delete(any(GamePlayer.class));
+        verify(fixture.playerRepository, never()).save(any(GamePlayer.class));
+        assertSame(fixture.bobPlayer,
+                fixture.playerRepository.findByGameAndUser(fixture.game, fixture.bob).orElseThrow());
+        assertEquals(originalPlayerId, fixture.bobPlayer.getId());
+        assertEquals(originalSeatIndex, fixture.bobPlayer.getSeatIndex());
+        assertEquals(originalHandJson, fixture.bobPlayer.getHandCardsJson());
+        assertEquals(aliceHandJson, fixture.alicePlayer.getHandCardsJson());
+        assertEquals(charlieHandJson, fixture.charliePlayer.getHandCardsJson());
+        assertSame(fixture.game, fixture.bobPlayer.getGame());
+        assertEquals(fixture.bob.getId(), fixture.game.getCurrentTurn());
+        assertEquals(originalDrawPileJson, fixture.game.getDrawPileJson());
+        assertEquals(originalDiscardPileJson, fixture.game.getDiscardPileJson());
+        assertEquals(originalColor, fixture.game.getCurrentColor());
+        assertEquals(originalDirection, fixture.game.isClockwise());
+        assertEquals(originalPendingDrawCount, fixture.game.getPendingDrawCount());
+        assertEquals(originalPendingDrawType, fixture.game.getPendingDrawType());
+        assertEquals(GameStatus.PLAYING, fixture.game.getStatus());
+        assertEquals(RoomStatus.PLAYING, fixture.room.getStatus());
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> gameState = (Map<String, Object>) snapshot.get("gameState");
+        assertEquals(false, gameState.get("disconnectGraceActive"));
+        assertEquals(fixture.game.getId(), gameState.get("gameId"));
+        assertEquals(fixture.room.getId(), gameState.get("roomId"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> players = (List<Map<String, Object>>) gameState.get("players");
+        Map<String, Object> restoredPlayer = players.stream()
+                .filter(player -> fixture.bob.getId().equals(player.get("userId")))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(originalSeatIndex, restoredPlayer.get("seatIndex"));
+        assertEquals(3, players.size());
+        assertEquals(1, ((List<?>) snapshot.get("handCards")).size());
+        assertEquals("PLAYER_RECONNECTED", lastPatch(fixture.wsService).type());
+
+        fixture.service.drawCard(fixture.game.getId(), fixture.bob.getId());
+        assertEquals(fixture.charlie.getId(), fixture.game.getCurrentTurn());
+    }
+
+    @Test
+    void reconnectDoesNotRecreatePlayerAfterTimeoutRemoval() {
+        Fixture fixture = fixture();
+        long disconnectedAt = System.currentTimeMillis();
+        fixture.service.playerDisconnected("bob", disconnectedAt);
+        fixture.service.expireDisconnectGracePeriods(disconnectedAt + GameService.DISCONNECT_GRACE_PERIOD_MS);
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> fixture.service.reconnectPlayer(fixture.room.getId(), fixture.bob.getId()));
+
+        assertTrue(error.getMessage().contains("not in this game"));
+        verify(fixture.playerRepository, never()).save(fixture.bobPlayer);
+        assertEquals(2, fixture.playerRepository.findByGameOrderBySeatIndexAsc(fixture.game).size());
+    }
+
+    @Test
+    void websocketReconnectMatchesTheAccountIdAndClearsWaitingState() {
         Fixture fixture = fixture();
         fixture.service.playerDisconnected("bob", System.currentTimeMillis());
 
@@ -158,17 +234,32 @@ class GameServiceDisconnectGraceTest {
         GamePlayer alicePlayer = player(game, alice, 0);
         GamePlayer bobPlayer = player(game, bob, 1);
         GamePlayer charliePlayer = player(game, charlie, 2);
+        alicePlayer.setId(101L);
+        bobPlayer.setId(102L);
+        charliePlayer.setId(103L);
         List<GamePlayer> players = new ArrayList<>(List.of(alicePlayer, bobPlayer, charliePlayer));
 
         when(gameRepository.findById(game.getId())).thenReturn(Optional.of(game));
+        when(gameRepository.findByRoom(room)).thenReturn(List.of(game));
+        when(roomRepository.findById(room.getId())).thenReturn(Optional.of(room));
+        when(userRepository.findById(alice.getId())).thenReturn(Optional.of(alice));
+        when(userRepository.findById(bob.getId())).thenReturn(Optional.of(bob));
+        when(userRepository.findById(charlie.getId())).thenReturn(Optional.of(charlie));
+        when(userRepository.findByUsername("alice")).thenReturn(Optional.of(alice));
         when(userRepository.findByUsername("bob")).thenReturn(Optional.of(bob));
+        when(userRepository.findByUsername("charlie")).thenReturn(Optional.of(charlie));
         when(userRepository.getReferenceById(alice.getId())).thenReturn(alice);
+        when(userRepository.getReferenceById(bob.getId())).thenReturn(bob);
         when(userRepository.getReferenceById(charlie.getId())).thenReturn(charlie);
         when(playerRepository.findByUser(bob)).thenReturn(List.of(bobPlayer));
         when(playerRepository.findByGameOrderBySeatIndexAsc(game))
                 .thenAnswer(invocation -> new ArrayList<>(players));
-        when(playerRepository.findByGameAndUser(game, alice)).thenReturn(Optional.of(alicePlayer));
-        when(playerRepository.findByGameAndUser(game, charlie)).thenReturn(Optional.of(charliePlayer));
+        when(playerRepository.findByGameAndUser(game, alice))
+                .thenAnswer(invocation -> players.contains(alicePlayer) ? Optional.of(alicePlayer) : Optional.empty());
+        when(playerRepository.findByGameAndUser(game, bob))
+                .thenAnswer(invocation -> players.contains(bobPlayer) ? Optional.of(bobPlayer) : Optional.empty());
+        when(playerRepository.findByGameAndUser(game, charlie))
+                .thenAnswer(invocation -> players.contains(charliePlayer) ? Optional.of(charliePlayer) : Optional.empty());
         when(playerRepository.save(any(GamePlayer.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(gameRepository.save(any(Game.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(roomRepository.save(any(Room.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -178,6 +269,20 @@ class GameServiceDisconnectGraceTest {
             state.put("roomCode", room.getRoomCode());
             state.put("status", room.getStatus().name());
             state.put("playerCount", players.size());
+            return state;
+        });
+        when(roomService.getRoomState(room.getId())).thenAnswer(invocation -> {
+            Map<String, Object> state = new LinkedHashMap<>();
+            state.put("roomId", room.getId());
+            state.put("roomCode", room.getRoomCode());
+            state.put("status", room.getStatus().name());
+            state.put("gameId", game.getId());
+            state.put("playerCount", players.size());
+            state.put("players", players.stream().map(player -> Map.<String, Object>of(
+                    "userId", player.getUser().getId(),
+                    "username", player.getUser().getUsername(),
+                    "seatIndex", player.getSeatIndex()
+            )).toList());
             return state;
         });
         doAnswer(invocation -> {

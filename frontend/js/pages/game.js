@@ -1359,6 +1359,18 @@ createApp({
             }
         };
 
+        const restoreAfterReconnect = async () => {
+            if (!roomId.value) return null;
+            const snapshot = await realtimeUtils.restoreReconnectSnapshot({
+                httpClient: axios,
+                apiBase,
+                roomId: roomId.value,
+                applySnapshot: renderSnapshot
+            });
+            console.info(`[UNO-SYNC] reconnect snapshot received roomId=${roomId.value} version=${extractStateVersion(snapshot) ?? "none"}`);
+            return snapshot;
+        };
+
         const updateConnectionMode = () => {
             if (typeof realtimeUtils.resolveConnectionMode === "function") {
                 connectionMode.value = realtimeUtils.resolveConnectionMode({
@@ -1575,7 +1587,12 @@ createApp({
                     if (gameId.value) subscribeGameChannels(gameId.value);
                     addLog(t("connected"));
                     if (resyncOnConnect) {
-                        await refreshFromServer({ reason: "ws-connected" });
+                        try {
+                            await restoreAfterReconnect();
+                        } catch (error) {
+                            console.error("[UNO-SYNC] reconnect restore failed", error);
+                            await refreshFromServer({ reason: "ws-reconnect-restore-failed" });
+                        }
                     }
                     resolveOnce(true);
                 };
@@ -1650,7 +1667,7 @@ createApp({
             if (!roomId.value) {
                 showToastMessage(language.value === "zh" ? "缺少 roomId，无法进入游戏页" : "Missing roomId");
                 console.error("[UNO] init failed", new Error("Missing roomId"));
-                return;
+                return false;
             }
             try {
                 console.info("[UNO-GAME] joining room", roomId.value);
@@ -1658,14 +1675,17 @@ createApp({
                 console.info("[UNO-GAME] join response code =", response.data?.code);
                 if (response.data.code === 200) {
                     renderSnapshot(response.data.data);
+                    return true;
                 } else {
                     showToastMessage(response.data.message || (language.value === "zh" ? "加入游戏失败" : "Failed to join game"));
+                    return false;
                 }
             } catch (error) {
                 console.error("[UNO] init failed", error);
                 if (!handleMissingRoomOrGame(error, language.value === "zh" ? "房间不可用" : "Room unavailable")) {
                     showToastMessage(error.response?.data?.message || (language.value === "zh" ? "加入游戏失败" : "Failed to join game"));
                 }
+                return false;
             }
         };
 
@@ -1865,7 +1885,9 @@ createApp({
             }, 250);
 
             shouldReconnect = true;
-            connectWebSocket({ resyncOnConnect: false }).then((connected) => {
+            const joined = await joinAndLoad();
+            if (!joined) return;
+            connectWebSocket().then((connected) => {
                 if (!connected && !wsConnected.value) {
                     updateConnectionMode();
                 }
@@ -1873,7 +1895,6 @@ createApp({
                 console.error("[UNO-GAME] ws connect failed", error);
                 enterFallbackNow("ws-connect-exception");
             });
-            await joinAndLoad();
         });
 
         onUnmounted(() => {

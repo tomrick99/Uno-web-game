@@ -148,13 +148,21 @@ public class GameService {
         return withRoomLock(roomId, () -> doContinueWithoutDisconnectedPlayer(gameId, userId));
     }
 
+    public Map<String, Object> reconnectPlayer(Long roomId, Long userId) {
+        return withRoomLock(roomId, () -> doReconnectPlayer(roomId, userId));
+    }
+
     public void playerConnected(String username) {
         if (username == null || username.isBlank()) {
             return;
         }
         connectedUsernames.add(username);
+        User connectedUser = userRepository.findByUsername(username).orElse(null);
+        if (connectedUser == null) {
+            return;
+        }
         disconnectGraceByRoom.values().stream()
-                .filter(grace -> username.equals(grace.disconnectedPlayerName()))
+                .filter(grace -> connectedUser.getId().equals(grace.disconnectedPlayerId()))
                 .toList()
                 .forEach(grace -> withRoomLock(grace.roomId(), () -> {
                     resumeAfterReconnect(grace);
@@ -554,6 +562,29 @@ public class GameService {
         if (game != null && game.getRoom() != null && disconnectGraceByRoom.containsKey(game.getRoom().getId())) {
             throw new IllegalArgumentException("Game is paused while waiting for a disconnected player");
         }
+    }
+
+    private Map<String, Object> doReconnectPlayer(Long roomId, Long userId) {
+        Room room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
+        Game game = gameRepository.findByRoom(room).stream()
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
+        GamePlayer player = gamePlayerRepository.findByGameAndUser(game, user)
+                .orElseThrow(() -> new IllegalArgumentException("Player is not in this game"));
+
+        DisconnectGrace grace = disconnectGraceByRoom.get(roomId);
+        if (grace != null
+                && grace.gameId().equals(game.getId())
+                && grace.disconnectedPlayerId().equals(player.getUser().getId())) {
+            resumeAfterReconnect(grace);
+        }
+
+        log.info("[DISCONNECT] action=reconnectSnapshot roomId={} gameId={} userId={} playerId={} graceActive={}",
+                roomId, game.getId(), userId, player.getId(), disconnectGraceByRoom.containsKey(roomId));
+        return buildRealtimeSnapshot(roomId, game.getId(), userId);
     }
 
     private Map<String, Object> doJoinGame(Long roomId, Long userId) {

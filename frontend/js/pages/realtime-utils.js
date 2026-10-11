@@ -118,11 +118,29 @@
         return { apply: true, reason: "apply" };
     }
 
+    async function restoreReconnectSnapshot({ httpClient, apiBase, roomId, applySnapshot }) {
+        if (!httpClient || typeof httpClient.post !== "function") {
+            throw new Error("An HTTP client is required to restore a reconnecting player");
+        }
+        if (!roomId) {
+            throw new Error("A room id is required to restore a reconnecting player");
+        }
+        const response = await httpClient.post(`${apiBase}/game/room/${roomId}/reconnect`);
+        if (response?.data?.code !== 200) {
+            throw new Error(response?.data?.message || "Failed to restore player connection");
+        }
+        if (typeof applySnapshot === "function") {
+            applySnapshot(response.data.data);
+        }
+        return response.data.data;
+    }
+
     return {
         DEFAULT_FALLBACK_THRESHOLD_MS,
         shouldEnableFallbackPolling,
         resolveConnectionMode,
         mergeRealtimeBatch,
-        resolveHandPatchDecision
+        resolveHandPatchDecision,
+        restoreReconnectSnapshot
     };
 });

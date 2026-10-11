@@ -48,6 +48,22 @@ public class GameController {
         }
     }
 
+    @PostMapping("/room/{roomId}/reconnect")
+    public ApiResponse<Map<String, Object>> reconnectPlayer(@PathVariable Long roomId, HttpSession session) {
+        Long userId = getCurrentUserId(session);
+        if (userId == null) {
+            return unauthorized();
+        }
+
+        try {
+            return ApiResponse.success("Player reconnected", gameService.reconnectPlayer(roomId, userId));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.error(400, e.getMessage());
+        } catch (RuntimeException e) {
+            return ApiResponse.error(500, e.getMessage());
+        }
+    }
+
     @PostMapping("/{gameId}/play")
     public ApiResponse<Map<String, Object>> playCard(@PathVariable Long gameId,
                                                      @RequestParam int cardIndex,
