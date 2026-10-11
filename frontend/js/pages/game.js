@@ -27,6 +27,9 @@ createApp({
         const pendingDrawCount = ref(0);
         const pendingDrawType = ref("NONE");
         const lastPenaltyPlayerId = ref(null);
+        const disconnectWait = ref(null);
+        const disconnectClockNow = ref(Date.now());
+        const submittingContinueVote = ref(false);
         const drawPileSize = ref(0);
         const topCard = ref(null);
         const handCards = ref([]);
@@ -78,6 +81,7 @@ createApp({
         let pendingRealtimeBatch = null;
         let pendingRealtimeBatchTimer = null;
         let gameStartConsistencyTimer = null;
+        let disconnectCountdownTimer = null;
         let lastGameStartConsistencyKey = null;
 
         const colorMap = {
@@ -164,7 +168,14 @@ createApp({
                 classicRule3: "Classic 只保留现有 +2 / +4 叠加规则。",
                 noMercyRule1: "No Mercy 额外包含 DROP、SKIP ALL、彩色 +4 和黑色 +6 / +10 / +4 REV。",
                 noMercyRule2: "黑色罚牌打出后需要选颜色。",
-                noMercyRule3: "罚牌叠加必须不小于上一张罚牌数值。"
+                noMercyRule3: "罚牌叠加必须不小于上一张罚牌数值。",
+                waitingReconnect: "正在等待 {name} 重新连接",
+                disconnectCountdown: "剩余等待时间：{seconds} 秒",
+                continueWithoutPlayer: "不等待该玩家，继续游戏",
+                continueVoteProgress: "已同意：{approved} / {required}",
+                continueVoteRecorded: "已同意，正在等待其他在线玩家。",
+                continueVoteFailed: "提交继续游戏意见失败。",
+                waitingGamePaused: "游戏已暂停，回合不会推进。"
             },
             en: {
                 room: "Room",
@@ -242,7 +253,14 @@ createApp({
                 classicRule3: "+2 and +4 use Classic stacking; Classic does not include No Mercy cards.",
                 noMercyRule1: "Adds DROP, SKIP ALL, colored +4, and black +6, +10, +4 REV.",
                 noMercyRule2: "Black penalty cards require color selection; the card face only shows the penalty.",
-                noMercyRule3: "Draw stacks must be equal or higher than the last penalty: +6 accepts +6/+10, +10 accepts +10."
+                noMercyRule3: "Draw stacks must be equal or higher than the last penalty: +6 accepts +6/+10, +10 accepts +10.",
+                waitingReconnect: "Waiting for {name} to reconnect",
+                disconnectCountdown: "Time remaining: {seconds}s",
+                continueWithoutPlayer: "Continue without this player",
+                continueVoteProgress: "Approved: {approved} / {required}",
+                continueVoteRecorded: "Approved. Waiting for the other online players.",
+                continueVoteFailed: "Failed to submit the continue vote.",
+                waitingGamePaused: "The game is paused and the turn will not advance."
             }
         };
 
@@ -285,8 +303,27 @@ createApp({
         const isDrawPenaltyType = (type) => drawPenaltyTypes.has(type);
         const isNumberType = (type) => type === "NUMBER";
 
+        const isWaitingForDisconnectedPlayer = computed(() => Boolean(disconnectWait.value?.active));
+        const disconnectRemainingSeconds = computed(() => {
+            const deadline = Number(disconnectWait.value?.deadlineEpochMs);
+            if (Number.isFinite(deadline) && deadline > 0) {
+                return Math.max(0, Math.ceil((deadline - disconnectClockNow.value) / 1000));
+            }
+            return Math.max(0, Number(disconnectWait.value?.remainingSeconds || 0));
+        });
+        const hasApprovedContinue = computed(() =>
+            (disconnectWait.value?.approvedPlayerIds || []).some((id) => String(id) === String(userId.value))
+        );
+        const canVoteToContinue = computed(() =>
+            isWaitingForDisconnectedPlayer.value
+            && String(disconnectWait.value?.disconnectedPlayerId) !== String(userId.value)
+            && !hasApprovedContinue.value
+            && !submittingContinueVote.value
+        );
         const isMyTurn = computed(() =>
-            gameStatus.value === "PLAYING" && String(currentTurn.value) === String(userId.value)
+            gameStatus.value === "PLAYING"
+            && !isWaitingForDisconnectedPlayer.value
+            && String(currentTurn.value) === String(userId.value)
         );
         const isPendingDrawStack = computed(() =>
             Number(pendingDrawCount.value) > 0 && pendingDrawType.value !== "NONE"
@@ -561,6 +598,9 @@ createApp({
 
         const turnLabel = computed(() => {
             if (gameStatus.value === "FINISHED") return t("gameFinished");
+            if (isWaitingForDisconnectedPlayer.value) {
+                return t("waitingReconnect", { name: disconnectWait.value.disconnectedPlayerName });
+            }
             if (gameStatus.value !== "PLAYING") {
                 return `${t("waitingPlayers")} (${playerCount.value}/${maxPlayers.value})`;
             }
@@ -890,6 +930,7 @@ createApp({
                 copyField("drawPileSize");
                 copyField("winnerId");
                 copyField("rematchReadyPlayerIds");
+                copyField("disconnectWait");
                 if (hasOwnField(payload, "direction")) {
                     gameState.clockwise = payload.direction !== -1;
                 }
@@ -1062,6 +1103,11 @@ createApp({
             if (hasOwnField(gameState, "pendingDrawCount")) pendingDrawCount.value = Number(gameState.pendingDrawCount ?? 0);
             if (hasOwnField(gameState, "pendingDrawType")) pendingDrawType.value = gameState.pendingDrawType ?? "NONE";
             if (hasOwnField(gameState, "lastPenaltyPlayerId")) lastPenaltyPlayerId.value = gameState.lastPenaltyPlayerId;
+            if (hasOwnField(gameState, "disconnectWait")) {
+                disconnectWait.value = gameState.disconnectWait || null;
+                disconnectClockNow.value = Date.now();
+                if (!disconnectWait.value) submittingContinueVote.value = false;
+            }
             if (hasOwnField(gameState, "drawPileSize")) drawPileSize.value = Number(gameState.drawPileSize ?? 0);
             if (hasOwnField(gameState, "topCard") && gameState.topCard) {
                 topCard.value = {
@@ -1492,7 +1538,10 @@ createApp({
                     if (gameId.value) subscribeGameChannels(gameId.value);
                     addLog(t("connected"));
                     if (resyncOnConnect) {
-                        await refreshFromServer({ reason: "ws-connected" });
+                        // The idempotent join is also the authenticated reconnect signal.
+                        // Its response is a full snapshot, so reconnect both clears any
+                        // grace wait and resynchronizes the current game state.
+                        await joinAndLoad();
                     }
                     resolveOnce(true);
                 };
@@ -1537,6 +1586,10 @@ createApp({
 
                 client = new window.StompJs.Client({
                     webSocketFactory: socketFactory,
+                    connectHeaders: {
+                        "x-uno-client": "game",
+                        "x-uno-room-id": String(roomId.value || "")
+                    },
                     reconnectDelay: 0,
                     debug: () => {},
                     onConnect: handleConnected,
@@ -1699,6 +1752,29 @@ createApp({
             }
         };
 
+        const continueWithoutPlayerAction = async () => {
+            if (!canVoteToContinue.value || !gameId.value) return;
+            submittingContinueVote.value = true;
+            try {
+                const response = await axios.post(`${apiBase}/game/${gameId.value}/continue-without-player`);
+                if (response.data.code === 200) {
+                    const waitState = response.data.data?.disconnectWait;
+                    if (waitState) disconnectWait.value = waitState;
+                    if (shouldRefreshAfterAck(response)) {
+                        await refreshFromServer({ reason: "disconnect-continue-vote" });
+                    }
+                } else {
+                    showToastMessage(response.data.message || t("continueVoteFailed"));
+                    await refreshFromServer({ reason: "disconnect-continue-vote-rejected" });
+                }
+            } catch (error) {
+                showToastMessage(error.response?.data?.message || t("continueVoteFailed"));
+                await refreshFromServer({ reason: "disconnect-continue-vote-error" });
+            } finally {
+                submittingContinueVote.value = false;
+            }
+        };
+
         const restartGameAction = async () => {
             if (!gameId.value || restartingGame.value) return;
             restartingGame.value = true;
@@ -1759,6 +1835,9 @@ createApp({
             window.addEventListener("beforeunload", beforeUnloadHandler);
             delegatedButtonHandler = handleDelegatedButtonClick;
             document.addEventListener("click", delegatedButtonHandler);
+            disconnectCountdownTimer = setInterval(() => {
+                disconnectClockNow.value = Date.now();
+            }, 250);
 
             shouldReconnect = true;
             connectWebSocket({ resyncOnConnect: false }).then((connected) => {
@@ -1776,6 +1855,7 @@ createApp({
             shouldReconnect = false;
             cleanupRealtime();
             clearAutoPenaltyTimer();
+            if (disconnectCountdownTimer) clearInterval(disconnectCountdownTimer);
             if (beforeUnloadHandler) window.removeEventListener("beforeunload", beforeUnloadHandler);
             if (delegatedButtonHandler) document.removeEventListener("click", delegatedButtonHandler);
         });
@@ -1795,6 +1875,12 @@ createApp({
             pendingDrawCount,
             pendingDrawType,
             lastPenaltyPlayerId,
+            disconnectWait,
+            disconnectRemainingSeconds,
+            isWaitingForDisconnectedPlayer,
+            hasApprovedContinue,
+            canVoteToContinue,
+            submittingContinueVote,
             drawPileSize,
             topCard,
             handCards,
@@ -1843,6 +1929,7 @@ createApp({
             playSelectedCard,
             drawCardAction,
             drawPenaltyAction,
+            continueWithoutPlayerAction,
             restartGameAction,
             returnToLobby
         };

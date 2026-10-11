@@ -120,6 +120,24 @@ public class GameController {
         }
     }
 
+    @PostMapping("/{gameId}/continue-without-player")
+    public ApiResponse<Map<String, Object>> continueWithoutDisconnectedPlayer(@PathVariable Long gameId,
+                                                                              HttpSession session) {
+        Long userId = getCurrentUserId(session);
+        if (userId == null) {
+            return unauthorized();
+        }
+
+        try {
+            return ApiResponse.success("Continue vote recorded",
+                    gameService.continueWithoutDisconnectedPlayer(gameId, userId));
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.error(400, e.getMessage());
+        } catch (RuntimeException e) {
+            return ApiResponse.error(500, e.getMessage());
+        }
+    }
+
     @PostMapping("/{gameId}/restart")
     public ApiResponse<Map<String, Object>> restartGame(@PathVariable Long gameId, HttpSession session) {
         Long userId = getCurrentUserId(session);

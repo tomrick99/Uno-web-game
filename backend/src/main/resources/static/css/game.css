@@ -162,6 +162,56 @@
     background: rgba(52, 152, 219, 0.12);
 }
 
+.table-player.disconnected {
+    border-color: rgba(243, 156, 18, 0.8);
+    opacity: 0.72;
+}
+
+.disconnect-wait-panel {
+    position: relative;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    width: min(760px, calc(100% - 32px));
+    margin: 0 auto 12px;
+    padding: 16px 20px;
+    border: 1px solid rgba(243, 156, 18, 0.55);
+    border-radius: 12px;
+    background: rgba(67, 43, 8, 0.88);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.28);
+}
+
+.disconnect-wait-copy {
+    display: grid;
+    gap: 4px;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.disconnect-wait-copy strong,
+.disconnect-countdown {
+    color: var(--text-primary);
+}
+
+.disconnect-countdown {
+    font-size: 18px;
+    font-variant-numeric: tabular-nums;
+}
+
+.continue-without-player-btn {
+    flex: 0 0 auto;
+}
+
+@media (max-width: 680px) {
+    .disconnect-wait-panel {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 12px;
+    }
+}
+
 .opponent-avatar {
     width: 44px;
     height: 44px;

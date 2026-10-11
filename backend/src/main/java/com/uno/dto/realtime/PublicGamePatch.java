@@ -27,6 +27,7 @@ public record PublicGamePatch(
         List<PublicPlayerInfo> players,
         Long winnerId,
         List<Long> rematchReadyPlayerIds,
+        Map<String, Object> disconnectWait,
         String message,
         Boolean resyncRequired
 ) {
