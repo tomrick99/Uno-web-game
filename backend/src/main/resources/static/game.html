@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>UNO - Game</title>
     <script src="https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.prod.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios@1.5.0/dist/axios.min.js"></script>
@@ -139,6 +139,7 @@
                     :key="`${card.color}-${card.type}-${card.value}-${idx}`"
                     class="card"
                     :class="[card.color.toLowerCase(), card.stateClass, { selected: selectedCard === idx }]"
+                    :aria-pressed="selectedCard === idx"
                     :title="card.hint"
                     @click="selectCard(idx)"
                 >
@@ -148,11 +149,48 @@
                 </div>
             </div>
 
+            <div class="mobile-action-dock" role="group" :aria-label="t('yourTurn')">
+                <span v-if="showPenaltyNotice" class="mobile-penalty-text">{{ penaltyNoticeText }}</span>
+                <button
+                    v-if="showDrawPenaltyButton"
+                    id="mobileDrawPenaltyButton"
+                    class="btn-primary mobile-draw-action"
+                    :disabled="drawingPenalty"
+                    @click="drawPenaltyAction()"
+                >
+                    {{ drawPenaltyButtonText }}
+                </button>
+                <button
+                    v-else
+                    id="mobileDrawCardButton"
+                    class="btn-primary mobile-draw-action"
+                    :disabled="!canDraw || drawingCard"
+                    @click="drawCardAction"
+                >
+                    {{ drawingCard ? t("drawing") : t("clickDraw") }}
+                </button>
+                <button
+                    v-if="selectedCard !== null"
+                    id="mobilePlaySelectedCardButton"
+                    class="btn-play mobile-play-action"
+                    :disabled="!canPlaySelected || playingCard"
+                    @click="playSelectedCard"
+                >
+                    {{ playingCard ? t("playing") : t("playCard") }}
+                </button>
+                <div v-if="needsColorPick" class="mobile-color-actions">
+                    <button class="btn-color-pick red" @click="pickColor('RED')">{{ colorName("RED") }}</button>
+                    <button class="btn-color-pick blue" @click="pickColor('BLUE')">{{ colorName("BLUE") }}</button>
+                    <button class="btn-color-pick green" @click="pickColor('GREEN')">{{ colorName("GREEN") }}</button>
+                    <button class="btn-color-pick yellow" @click="pickColor('YELLOW')">{{ colorName("YELLOW") }}</button>
+                </div>
+            </div>
+
             <div class="action-buttons" v-if="selectedCard !== null">
                 <button id="playSelectedCardButton" class="btn-play" :disabled="!canPlaySelected || playingCard" @click="playSelectedCard">
                     {{ playingCard ? t("playing") : t("playCard") }}
                 </button>
-                <button v-if="needsColorPick" class="btn-color-pick" @click="pickColor('RED')">{{ colorName("RED") }}</button>
+                <button v-if="needsColorPick" class="btn-color-pick red" @click="pickColor('RED')">{{ colorName("RED") }}</button>
                 <button v-if="needsColorPick" class="btn-color-pick blue" @click="pickColor('BLUE')">{{ colorName("BLUE") }}</button>
                 <button v-if="needsColorPick" class="btn-color-pick green" @click="pickColor('GREEN')">{{ colorName("GREEN") }}</button>
                 <button v-if="needsColorPick" class="btn-color-pick yellow" @click="pickColor('YELLOW')">{{ colorName("YELLOW") }}</button>

@@ -424,10 +424,16 @@
 .hand-cards .card.selected {
     transform: translateY(-24px);
     border: 3px solid var(--yellow);
+    outline: 3px solid rgba(255, 255, 255, 0.9);
+    outline-offset: 2px;
     box-shadow: 0 0 25px rgba(243, 156, 18, 0.6);
 }
 
 /* 操作按钮 */
+.mobile-action-dock {
+    display: none;
+}
+
 .action-buttons {
     display: flex;
     justify-content: center;
@@ -556,7 +562,8 @@
     transition: all 0.3s;
 }
 
-.btn-color-pick:nth-child(2) {
+.btn-color-pick:nth-child(2),
+.btn-color-pick.red {
     background: #E74C3C;
     color: white;
 }
@@ -835,5 +842,199 @@
 
     .help-section {
         font-size: 12px;
+    }
+}
+
+/*
+ * Touch layouts keep the player's hand and primary turn actions in a persistent
+ * bottom tray. The coarse-pointer branch includes landscape iPads whose CSS
+ * viewport can be wider than the regular tablet breakpoint.
+ */
+@media (max-width: 1024px), (max-width: 1366px) and (any-pointer: coarse) {
+    #app {
+        min-height: 100dvh;
+        padding-bottom: calc(190px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .my-hand-area {
+        position: fixed;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        z-index: 60;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 6px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+        background: rgba(10, 14, 30, 0.96);
+        border-top-color: rgba(255, 255, 255, 0.2);
+        box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.45);
+        backdrop-filter: blur(14px);
+    }
+
+    .hand-cards {
+        min-height: 104px;
+        justify-content: flex-start;
+        gap: 5px;
+        padding: 20px 6px 4px;
+        scroll-padding-inline: 6px;
+        overscroll-behavior-x: contain;
+        touch-action: pan-x;
+    }
+
+    .hand-cards .card {
+        width: clamp(56px, 15vw, 76px);
+        height: clamp(84px, 22.5vw, 114px);
+        padding: 6px;
+    }
+
+    .hand-cards .card.playable:hover {
+        transform: none;
+    }
+
+    .hand-cards .card.selected,
+    .hand-cards .card.playable.selected:hover {
+        transform: translateY(-14px);
+        border-color: var(--yellow);
+        box-shadow: 0 0 28px rgba(243, 156, 18, 0.82);
+    }
+
+    .my-hand-area > .action-buttons,
+    .my-hand-area > .penalty-panel {
+        display: none;
+    }
+
+    .mobile-action-dock {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        min-height: 48px;
+    }
+
+    .mobile-action-dock button {
+        min-height: 44px;
+        touch-action: manipulation;
+    }
+
+    .mobile-draw-action,
+    .mobile-play-action {
+        min-width: 112px;
+        padding: 10px 18px;
+        font-size: 15px;
+    }
+
+    .mobile-penalty-text {
+        flex-basis: 100%;
+        overflow: hidden;
+        color: var(--yellow);
+        font-size: 12px;
+        line-height: 1.25;
+        text-align: center;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .mobile-color-actions {
+        display: flex;
+        gap: 6px;
+    }
+
+    .mobile-color-actions .btn-color-pick {
+        width: 44px;
+        height: 44px;
+        min-height: 44px;
+        font-size: 12px;
+    }
+}
+
+@media (max-width: 1024px) and (orientation: landscape) and (max-height: 600px) {
+    #app {
+        padding-bottom: calc(146px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .game-top-bar {
+        flex-direction: row;
+        padding: 6px 12px;
+    }
+
+    .status-panel {
+        gap: 5px;
+    }
+
+    .status-chip,
+    .top-action-btn,
+    .lang-toggle {
+        padding: 6px 9px;
+    }
+
+    .players-area,
+    .opponents-area {
+        flex-wrap: nowrap;
+        justify-content: flex-start;
+        min-height: 0;
+        padding: 6px 12px;
+        overflow-x: auto;
+    }
+
+    .table-player,
+    .opponent {
+        min-width: 145px;
+        padding: 6px 10px;
+    }
+
+    .opponent-avatar {
+        width: 32px;
+        height: 32px;
+        font-size: 15px;
+    }
+
+    .game-center {
+        min-height: 145px;
+        padding: 6px;
+    }
+
+    .my-hand-area {
+        gap: 2px;
+        padding-top: 3px;
+        padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .hand-cards {
+        min-height: 88px;
+        padding-top: 14px;
+    }
+
+    .hand-cards .card {
+        width: 52px;
+        height: 78px;
+    }
+
+    .hand-cards .card.selected,
+    .hand-cards .card.playable.selected:hover {
+        transform: translateY(-9px);
+    }
+
+    .mobile-action-dock {
+        flex-wrap: nowrap;
+        min-height: 42px;
+        overflow-x: auto;
+    }
+
+    .mobile-action-dock button {
+        min-height: 38px;
+    }
+
+    .mobile-draw-action,
+    .mobile-play-action {
+        min-width: 98px;
+        padding: 8px 14px;
+    }
+
+    .mobile-color-actions .btn-color-pick {
+        width: 38px;
+        height: 38px;
+        min-height: 38px;
     }
 }
