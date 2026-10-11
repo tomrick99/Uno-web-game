@@ -7,6 +7,7 @@ const websocketEndpoint = "/api/ws";
 createApp({
     setup() {
         const username = ref("");
+        const currentUserId = ref(null);
         const rooms = ref([]);
         const showCreate = ref(false);
         const maxPlayers = ref(2);
@@ -223,10 +224,36 @@ createApp({
                     roomId: payload.roomId
                 };
                 console.info("[UNO-LOBBY] lobby event received", event.type, event.roomId);
+                if (payload.type === "LOBBY_ACTIVITY") {
+                    const shouldShow = typeof realtimeUtils.shouldShowLobbyActivity === "function"
+                        ? realtimeUtils.shouldShowLobbyActivity(payload, currentUserId.value)
+                        : String(payload.actor?.userId) !== String(currentUserId.value);
+                    if (!shouldShow) return;
+
+                    const actorName = payload.actor?.username || t("unknown");
+                    const roomLabel = payload.roomCode || payload.roomId || t("unknown");
+                    if (payload.event === "ROOM_CREATED") {
+                        infoMsg.value = language.value === "zh"
+                            ? `${actorName} 创建了房间 ${roomLabel}`
+                            : `${actorName} created room ${roomLabel}`;
+                    } else if (payload.event === "PLAYER_JOINED") {
+                        infoMsg.value = language.value === "zh"
+                            ? `${actorName} 加入了房间 ${roomLabel}`
+                            : `${actorName} joined room ${roomLabel}`;
+                    } else {
+                        return;
+                    }
+
+                    const notice = infoMsg.value;
+                    setTimeout(() => {
+                        if (infoMsg.value === notice) infoMsg.value = "";
+                    }, 3500);
+                    return;
+                }
                 if (event.type === "ROOM_REMOVED") {
                     removeRoomLocally(event.roomId);
                 }
-                if (payload.message) {
+                if (payload.message && !["ROOM_CREATED", "PLAYER_JOINED"].includes(event.type)) {
                     infoMsg.value = payload.message;
                     setTimeout(() => {
                         if (infoMsg.value === payload.message) infoMsg.value = "";
@@ -347,6 +374,7 @@ createApp({
                     return false;
                 }
                 const currentUser = res.data.data || {};
+                currentUserId.value = currentUser.id || null;
                 username.value = currentUser.username || "";
                 if (currentUser.id) localStorage.setItem("userId", currentUser.id);
                 if (currentUser.username) localStorage.setItem("username", currentUser.username);

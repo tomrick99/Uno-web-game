@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -25,7 +26,7 @@ import static org.mockito.Mockito.when;
 class RoomControllerTest {
 
     @Test
-    void createRoomImmediatelyJoinsHostAndReturnsAccuratePlayerCount() {
+    void createRoomJoinsHostWithoutPublishingDuplicateJoinActivity() {
         HttpSession session = mock(HttpSession.class);
 
         User host = new User("alice", "pw");
@@ -64,9 +65,14 @@ class RoomControllerTest {
         assertEquals(1, response.getData().get("playerCount"));
         assertEquals(42L, gameService.joinedRoomId);
         assertEquals(7L, gameService.joinedUserId);
+        assertFalse(gameService.publishLobbyActivity);
         assertTrue(wsService.lobbyBroadcasted);
         assertEquals("ROOM_CREATED", wsService.lastEvent);
         assertEquals(roomState, wsService.lastRoomState);
+        assertEquals(1, wsService.activityBroadcastCount);
+        assertEquals("ROOM_CREATED", wsService.lastActivityEvent);
+        assertEquals(7L, wsService.lastActorId);
+        assertEquals("alice", wsService.lastActorUsername);
     }
 
     private static final class FakeRoomService extends RoomService {
@@ -107,15 +113,17 @@ class RoomControllerTest {
     private static final class FakeGameService extends GameService {
         private Long joinedRoomId;
         private Long joinedUserId;
+        private boolean publishLobbyActivity = true;
 
         private FakeGameService() {
             super(null, null, null, null, null, null);
         }
 
         @Override
-        public Map<String, Object> joinGame(Long roomId, Long userId) {
+        public Map<String, Object> joinGame(Long roomId, Long userId, boolean publishLobbyActivity) {
             joinedRoomId = roomId;
             joinedUserId = userId;
+            this.publishLobbyActivity = publishLobbyActivity;
             return Map.of();
         }
     }
@@ -124,6 +132,10 @@ class RoomControllerTest {
         private boolean lobbyBroadcasted;
         private String lastEvent;
         private Map<String, Object> lastRoomState;
+        private int activityBroadcastCount;
+        private String lastActivityEvent;
+        private Long lastActorId;
+        private String lastActorUsername;
 
         private FakeWebSocketService() {
             super(null);
@@ -134,6 +146,17 @@ class RoomControllerTest {
             lobbyBroadcasted = true;
             lastEvent = event;
             lastRoomState = roomState;
+        }
+
+        @Override
+        public void broadcastLobbyActivity(Map<String, Object> roomState,
+                                           String event,
+                                           Long actorId,
+                                           String actorUsername) {
+            activityBroadcastCount++;
+            lastActivityEvent = event;
+            lastActorId = actorId;
+            lastActorUsername = actorUsername;
         }
     }
 }

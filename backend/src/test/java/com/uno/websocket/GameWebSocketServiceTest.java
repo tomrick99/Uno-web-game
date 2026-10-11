@@ -42,6 +42,54 @@ class GameWebSocketServiceTest {
     }
 
     @Test
+    void roomCreatedActivityUsesTheProvenLobbyTopic() {
+        RecordingTemplate template = new RecordingTemplate();
+        GameWebSocketService service = new GameWebSocketService(template);
+
+        Map<String, Object> roomState = new LinkedHashMap<>();
+        roomState.put("roomId", 12L);
+        roomState.put("roomCode", "ABC123");
+        roomState.put("playerCount", 1);
+
+        service.broadcastLobbyActivity(roomState, "ROOM_CREATED", 1L, "alice");
+
+        assertEquals(List.of("/topic/lobby"), template.sentDestinations);
+        Map<?, ?> payload = (Map<?, ?>) template.sentPayloads.get(0);
+        assertEquals("LOBBY_ACTIVITY", payload.get("type"));
+        assertEquals("ROOM_CREATED", payload.get("event"));
+        assertEquals(12L, payload.get("roomId"));
+        assertEquals("ABC123", payload.get("roomCode"));
+        assertEquals(roomState, payload.get("roomState"));
+        assertEquals(Map.of("userId", 1L, "username", "alice"), payload.get("actor"));
+        assertEquals("alice created room ABC123", payload.get("message"));
+        assertTrue(payload.get("timestamp") instanceof Long);
+    }
+
+    @Test
+    void playerJoinedActivityCarriesRoomParticipantsForClientExclusion() {
+        RecordingTemplate template = new RecordingTemplate();
+        GameWebSocketService service = new GameWebSocketService(template);
+        Map<String, Object> roomState = Map.of(
+                "roomId", 12L,
+                "roomCode", "ABC123",
+                "players", List.of(
+                        Map.of("userId", 1L, "username", "alice"),
+                        Map.of("userId", 3L, "username", "carol")));
+
+        service.broadcastLobbyActivity(
+                roomState,
+                "PLAYER_JOINED",
+                3L,
+                "carol");
+
+        assertEquals(List.of("/topic/lobby"), template.sentDestinations);
+        Map<?, ?> payload = (Map<?, ?>) template.sentPayloads.get(0);
+        assertEquals("PLAYER_JOINED", payload.get("event"));
+        assertEquals("carol joined room ABC123", payload.get("message"));
+        assertEquals(roomState, payload.get("roomState"));
+    }
+
+    @Test
     void roomDeletedAlsoBroadcastsLobbyRemovedEvent() {
         RecordingTemplate template = new RecordingTemplate();
         GameWebSocketService service = new GameWebSocketService(template);
@@ -196,6 +244,8 @@ class GameWebSocketServiceTest {
         private String user;
         private String userDestination;
         private Object userPayload;
+        private final java.util.ArrayList<String> sentDestinations = new java.util.ArrayList<>();
+        private final java.util.ArrayList<Object> sentPayloads = new java.util.ArrayList<>();
 
         private RecordingTemplate() {
             super(new NoOpMessageChannel());
@@ -205,6 +255,8 @@ class GameWebSocketServiceTest {
         public void convertAndSend(String destination, Object payload) {
             this.destination = destination;
             this.payload = payload;
+            this.sentDestinations.add(destination);
+            this.sentPayloads.add(payload);
         }
 
         @Override

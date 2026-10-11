@@ -57,6 +57,33 @@ public class GameWebSocketService {
         timedSend(LOBBY_TOPIC, payload, roomId, event);
     }
 
+    public void broadcastLobbyActivity(Map<String, Object> roomState,
+                                       String event,
+                                       Long actorId,
+                                       String actorUsername) {
+        Object roomId = roomState.get("roomId");
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("type", "LOBBY_ACTIVITY");
+        payload.put("event", event);
+        payload.put("roomId", roomId);
+        payload.put("roomCode", roomState.get("roomCode"));
+        payload.put("roomState", roomState);
+        payload.put("timestamp", System.currentTimeMillis());
+        String roomLabel = String.valueOf(roomState.get("roomCode") != null
+                ? roomState.get("roomCode")
+                : roomId);
+        String action = "ROOM_CREATED".equals(event) ? " created room " : " joined room ";
+        payload.put("message", actorUsername + action + roomLabel);
+
+        Map<String, Object> actor = new LinkedHashMap<>();
+        actor.put("userId", actorId);
+        actor.put("username", actorUsername);
+        payload.put("actor", actor);
+
+        log.info("[LOBBY] broadcast activity type={} roomId={} actorId={}", event, roomId, actorId);
+        timedSend(LOBBY_TOPIC, payload, roomId, event);
+    }
+
     public void broadcastLobbyRoomRemoved(Long roomId, String event, String message) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("type", "LOBBY_EVENT");

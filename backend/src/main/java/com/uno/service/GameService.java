@@ -81,7 +81,11 @@ public class GameService {
     }
 
     public Map<String, Object> joinGame(Long roomId, Long userId) {
-        return withRoomLock(roomId, () -> doJoinGame(roomId, userId));
+        return joinGame(roomId, userId, true);
+    }
+
+    public Map<String, Object> joinGame(Long roomId, Long userId, boolean publishLobbyActivity) {
+        return withRoomLock(roomId, () -> doJoinGame(roomId, userId, publishLobbyActivity));
     }
 
     public Map<String, Object> playCard(Long gameId, Long userId, int cardIndex, CardColor chosenColor) {
@@ -302,7 +306,7 @@ public class GameService {
         }
     }
 
-    private Map<String, Object> doJoinGame(Long roomId, Long userId) {
+    private Map<String, Object> doJoinGame(Long roomId, Long userId, boolean publishLobbyActivity) {
         Room room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
         User user = userRepository.findById(userId)
@@ -337,7 +341,14 @@ public class GameService {
 
             Map<String, Object> roomState = getRoomStateWithVersion(room, game);
             wsService.broadcastRoomState(roomState, "PLAYER_JOINED", user.getUsername() + " joined the room");
-            wsService.broadcastLobbyRoomState(roomState, "PLAYER_JOINED", user.getUsername() + " joined the room");
+            wsService.broadcastLobbyRoomState(roomState, "PLAYER_JOINED", null);
+            if (publishLobbyActivity) {
+                wsService.broadcastLobbyActivity(
+                        roomState,
+                        "PLAYER_JOINED",
+                        user.getId(),
+                        user.getUsername());
+            }
         }
 
         int currentPlayerCount = gamePlayerRepository.findByGameOrderBySeatIndexAsc(game).size();

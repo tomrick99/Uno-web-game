@@ -271,10 +271,14 @@ class GameServiceSnapshotVersionTest {
         gameService.joinGame(30L, 2L);
 
         assertTrue(template.sentDestinations.contains("/topic/lobby"));
-        Map<?, ?> lobbyPayload = template.lastPayloadFor("/topic/lobby");
+        Map<?, ?> lobbyPayload = template.lastPayloadFor("/topic/lobby", "LOBBY_EVENT");
         assertEquals("LOBBY_EVENT", lobbyPayload.get("type"));
         assertEquals("PLAYER_JOINED", lobbyPayload.get("event"));
         assertEquals(30L, lobbyPayload.get("roomId"));
+        Map<?, ?> activityPayload = template.lastPayloadFor("/topic/lobby", "LOBBY_ACTIVITY");
+        assertEquals("LOBBY_ACTIVITY", activityPayload.get("type"));
+        assertEquals("PLAYER_JOINED", activityPayload.get("event"));
+        assertEquals(Map.of("userId", 2L, "username", "bob"), activityPayload.get("actor"));
         @SuppressWarnings("unchecked")
         Map<String, Object> roomState = (Map<String, Object>) lobbyPayload.get("roomState");
         assertEquals(2, roomState.get("playerCount"));
@@ -478,6 +482,15 @@ class GameServiceSnapshotVersionTest {
         private Map<?, ?> lastPayloadFor(String destination) {
             int index = IntStream.range(0, sentDestinations.size())
                     .filter(i -> destination.equals(sentDestinations.get(i)))
+                    .reduce((first, second) -> second)
+                    .orElseThrow();
+            return (Map<?, ?>) sentPayloads.get(index);
+        }
+
+        private Map<?, ?> lastPayloadFor(String destination, String type) {
+            int index = IntStream.range(0, sentDestinations.size())
+                    .filter(i -> destination.equals(sentDestinations.get(i)))
+                    .filter(i -> sentPayloads.get(i) instanceof Map<?, ?> map && type.equals(map.get("type")))
                     .reduce((first, second) -> second)
                     .orElseThrow();
             return (Map<?, ?>) sentPayloads.get(index);

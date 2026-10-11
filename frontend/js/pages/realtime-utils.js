@@ -21,6 +21,22 @@
         return fallbackActive ? "fallback" : "reconnecting";
     }
 
+    function shouldShowLobbyActivity(payload, currentUserId) {
+        if (!payload || payload.type !== "LOBBY_ACTIVITY" || currentUserId === null || currentUserId === undefined) {
+            return false;
+        }
+        const currentId = String(currentUserId);
+        if (payload.actor?.userId !== null
+                && payload.actor?.userId !== undefined
+                && String(payload.actor.userId) === currentId) {
+            return false;
+        }
+        const players = Array.isArray(payload.roomState?.players) ? payload.roomState.players : [];
+        return !players.some((player) => player?.userId !== null
+            && player?.userId !== undefined
+            && String(player.userId) === currentId);
+    }
+
     function toVersion(value) {
         if (value === null || value === undefined || value === "") {
             return null;
@@ -122,6 +138,7 @@
         DEFAULT_FALLBACK_THRESHOLD_MS,
         shouldEnableFallbackPolling,
         resolveConnectionMode,
+        shouldShowLobbyActivity,
         mergeRealtimeBatch,
         resolveHandPatchDecision
     };
