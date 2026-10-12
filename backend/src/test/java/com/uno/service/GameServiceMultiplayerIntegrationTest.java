@@ -109,6 +109,22 @@ class GameServiceMultiplayerIntegrationTest {
     }
 
     @Test
+    void reconnectingSameAccountKeepsOneGamePlayerIdentity() {
+        Fixture fixture = createGame(List.of(
+                List.of(number(CardColor.RED, 1)),
+                List.of(number(CardColor.BLUE, 2))
+        ), drawPile(8));
+
+        gameService.joinGame(fixture.roomId(), fixture.userId(0));
+
+        List<GamePlayer> players = committedPlayers(fixture.gameId());
+        assertEquals(2, players.size());
+        assertEquals(1, players.stream()
+                .filter(player -> player.getUser().getId().equals(fixture.userId(0)))
+                .count(), "same-account reconnect must reuse the existing player identity");
+    }
+
+    @Test
     void threePlayerNormalTurnsCycleAliceToBobToCarolToAlice() {
         Fixture fixture = createGame(List.of(
                 List.of(number(CardColor.RED, 1), number(CardColor.BLUE, 1)),

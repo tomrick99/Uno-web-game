@@ -1,18 +1,22 @@
 package com.uno.websocket;
 
+import com.uno.session.ActiveLoginService;
 import com.uno.service.GameService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.event.EventListener;
 import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Component;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.messaging.SessionConnectedEvent;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 import org.springframework.web.socket.messaging.SessionSubscribeEvent;
 
 import java.security.Principal;
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,14 +33,25 @@ public class GameConnectionEventListener {
 
     private final GameService gameService;
     private final TaskScheduler taskScheduler;
+    private final ActiveWebSocketRegistry webSocketRegistry;
     private final Map<String, String> usernameBySession = new ConcurrentHashMap<>();
+    private final Map<String, String> loginTokenBySession = new ConcurrentHashMap<>();
     private final Set<String> gameSessionIds = ConcurrentHashMap.newKeySet();
     private final Map<String, AtomicInteger> sessionCountByUsername = new ConcurrentHashMap<>();
     private final Map<String, AtomicLong> connectionVersionByUsername = new ConcurrentHashMap<>();
+    private final Map<String, String> activeGameSessionByUsername = new ConcurrentHashMap<>();
 
-    public GameConnectionEventListener(GameService gameService, TaskScheduler taskScheduler) {
+    @Autowired
+    public GameConnectionEventListener(GameService gameService,
+                                       TaskScheduler taskScheduler,
+                                       ActiveWebSocketRegistry webSocketRegistry) {
         this.gameService = gameService;
         this.taskScheduler = taskScheduler;
+        this.webSocketRegistry = webSocketRegistry;
+    }
+
+    GameConnectionEventListener(GameService gameService, TaskScheduler taskScheduler) {
+        this(gameService, taskScheduler, null);
     }
 
     @EventListener
@@ -48,15 +63,33 @@ public class GameConnectionEventListener {
             return;
         }
 
-        registerConnectedSession(sessionId, principal.getName());
+        Map<String, Object> attributes = accessor.getSessionAttributes();
+        Object loginToken = attributes == null
+                ? null
+                : attributes.get(ActiveLoginService.LOGIN_TOKEN_ATTRIBUTE);
+        if (!(loginToken instanceof String) && webSocketRegistry != null) {
+            loginToken = webSocketRegistry.loginTokenForSession(sessionId);
+        }
+        registerConnectedSession(
+                sessionId,
+                principal.getName(),
+                loginToken instanceof String token ? token : null
+        );
     }
 
     void registerConnectedSession(String sessionId, String username) {
+        registerConnectedSession(sessionId, username, null);
+    }
+
+    void registerConnectedSession(String sessionId, String username, String loginToken) {
         if (sessionId == null || username == null || username.isBlank()) {
             return;
         }
         if (usernameBySession.putIfAbsent(sessionId, username) != null) {
             return;
+        }
+        if (loginToken != null && !loginToken.isBlank()) {
+            loginTokenBySession.put(sessionId, loginToken);
         }
         log.info("[WS] tracked session user={} sessionId={}", username, sessionId);
     }
@@ -80,6 +113,15 @@ public class GameConnectionEventListener {
             gameSessionIds.remove(sessionId);
             return;
         }
+        String previousSessionId = activeGameSessionByUsername.put(username, sessionId);
+        if (previousSessionId != null && !previousSessionId.equals(sessionId)) {
+            registerDisconnectedSession(previousSessionId);
+            if (webSocketRegistry != null) {
+                webSocketRegistry.closeSession(previousSessionId, CloseStatus.NORMAL);
+            }
+            log.info("[WS] replaced duplicate game connection user={} oldSessionId={} newSessionId={}",
+                    username, previousSessionId, sessionId);
+        }
         connectionVersionByUsername
                 .computeIfAbsent(username, ignored -> new AtomicLong())
                 .incrementAndGet();
@@ -102,6 +144,7 @@ public class GameConnectionEventListener {
             return;
         }
         String username = usernameBySession.remove(sessionId);
+        loginTokenBySession.remove(sessionId);
         if (username == null) {
             return;
         }
@@ -109,6 +152,8 @@ public class GameConnectionEventListener {
             log.info("[WS] ignored non-game session close user={} sessionId={}", username, sessionId);
             return;
         }
+
+        activeGameSessionByUsername.remove(username, sessionId);
 
         AtomicInteger counter = sessionCountByUsername.get(username);
         int remaining = counter == null ? 0 : counter.decrementAndGet();
@@ -124,6 +169,25 @@ public class GameConnectionEventListener {
             remaining = 0;
         }
         log.info("[WS] tracked disconnection user={} sessions={}", username, remaining);
+    }
+
+    Set<String> revokeLoginToken(String loginToken) {
+        Set<String> sessionIds = new LinkedHashSet<>();
+        loginTokenBySession.forEach((sessionId, token) -> {
+            if (loginToken.equals(token)) {
+                sessionIds.add(sessionId);
+            }
+        });
+        sessionIds.forEach(this::registerDisconnectedSession);
+        return sessionIds;
+    }
+
+    void revokeSessions(Set<String> sessionIds) {
+        sessionIds.forEach(this::registerDisconnectedSession);
+    }
+
+    int activeGameConnectionCount(String username) {
+        return activeGameSessionByUsername.containsKey(username) ? 1 : 0;
     }
 
     private void confirmStillDisconnected(String username, long expectedVersion) {

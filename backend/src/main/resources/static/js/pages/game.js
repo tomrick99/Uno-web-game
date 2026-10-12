@@ -72,6 +72,7 @@ createApp({
         const roomSubscription = ref(null);
         const gameSubscription = ref(null);
         const handSubscription = ref(null);
+        const sessionControlSubscription = ref(null);
         const subscribedGameId = ref(null);
 
         let reconnectTimer = null;
@@ -88,6 +89,8 @@ createApp({
         let gameStartConsistencyTimer = null;
         let lastGameStartConsistencyKey = null;
         let graceClockTimer = null;
+        let responseInterceptorId = null;
+        let sessionReplacementHandled = false;
 
         const colorMap = {
             RED: "#E74C3C",
@@ -814,7 +817,7 @@ createApp({
             }
             pendingRealtimeBatch = null;
             lastGameStartConsistencyKey = null;
-            for (const subscription of [roomSubscription, gameSubscription, handSubscription]) {
+            for (const subscription of [roomSubscription, gameSubscription, handSubscription, sessionControlSubscription]) {
                 if (subscription.value) {
                     subscription.value.unsubscribe();
                     subscription.value = null;
@@ -833,6 +836,20 @@ createApp({
                 }
                 stompClient.value = null;
             }
+        };
+
+        const handleSessionReplaced = (payload = {}) => {
+            if (sessionReplacementHandled) return;
+            sessionReplacementHandled = true;
+            shouldReconnect = false;
+            cleanupRealtime();
+            localStorage.removeItem("userId");
+            localStorage.removeItem("username");
+            sessionStorage.setItem(
+                "loginNotice",
+                payload.message || "This account was signed in on another device. You have been signed out."
+            );
+            window.location.replace("index.html");
         };
 
         const applyRoomConfig = (state) => {
@@ -1425,7 +1442,7 @@ createApp({
         };
 
         const resetSubscriptions = () => {
-            for (const subscription of [roomSubscription, gameSubscription, handSubscription]) {
+            for (const subscription of [roomSubscription, gameSubscription, handSubscription, sessionControlSubscription]) {
                 if (subscription.value) {
                     try {
                         subscription.value.unsubscribe();
@@ -1436,6 +1453,14 @@ createApp({
                 }
             }
             subscribedGameId.value = null;
+        };
+
+        const subscribeSessionControl = () => {
+            if (!stompClient.value || !wsConnected.value || sessionControlSubscription.value) return;
+            sessionControlSubscription.value = stompClient.value.subscribe("/user/queue/session-control", (message) => {
+                const payload = JSON.parse(message.body || "{}");
+                if (payload.type === "SESSION_REPLACED") handleSessionReplaced(payload);
+            });
         };
 
         const subscribeRoomTopic = () => {
@@ -1571,6 +1596,7 @@ createApp({
                     updateConnectionMode();
                     resetSubscriptions();
                     console.info("[UNO-GAME] ws connected");
+                    subscribeSessionControl();
                     subscribeRoomTopic();
                     if (gameId.value) subscribeGameChannels(gameId.value);
                     addLog(t("connected"));
@@ -1835,9 +1861,29 @@ createApp({
             console.info("[UNO-GAME] roomId from URL =", roomId.value);
             console.info("[UNO-GAME] websocket endpoint =", websocketEndpoint);
             applyLanguage();
+            responseInterceptorId = axios.interceptors.response.use(
+                (response) => {
+                    if (response.data?.code === 401
+                        && response.data?.message?.includes("signed in on another device")) {
+                        handleSessionReplaced(response.data);
+                    }
+                    return response;
+                },
+                (error) => {
+                    if (error.response?.data?.code === 401
+                        && error.response?.data?.message?.includes("signed in on another device")) {
+                        handleSessionReplaced(error.response.data);
+                    }
+                    return Promise.reject(error);
+                }
+            );
             try {
                 const response = await axios.get(`${apiBase}/user/me`);
                 if (response.data.code !== 200) {
+                    if (response.data.message?.includes("signed in on another device")) {
+                        handleSessionReplaced(response.data);
+                        return;
+                    }
                     window.location.replace("index.html");
                     return;
                 }
@@ -1886,6 +1932,10 @@ createApp({
             }
             if (beforeUnloadHandler) window.removeEventListener("beforeunload", beforeUnloadHandler);
             if (delegatedButtonHandler) document.removeEventListener("click", delegatedButtonHandler);
+            if (responseInterceptorId !== null) {
+                axios.interceptors.response.eject(responseInterceptorId);
+                responseInterceptorId = null;
+            }
         });
 
         return {

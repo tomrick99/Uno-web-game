@@ -1,5 +1,8 @@
 package com.uno.config;
 
+import com.uno.session.ActiveLoginService;
+import jakarta.servlet.http.HttpSessionListener;
+import org.springframework.boot.web.servlet.ServletListenerRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -16,6 +19,12 @@ public class SecurityConfig {
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
+    }
+
+    @Bean
+    public ServletListenerRegistrationBean<HttpSessionListener> activeLoginSessionListener(
+            ActiveLoginService activeLoginService) {
+        return new ServletListenerRegistrationBean<>(activeLoginService);
     }
 
     @Bean

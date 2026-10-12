@@ -9,6 +9,8 @@ import com.uno.repository.UserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
+import org.springframework.messaging.MessageHeaders;
+import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.simp.user.SimpUser;
 import org.springframework.messaging.simp.user.SimpUserRegistry;
@@ -28,6 +30,24 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class GameWebSocketServiceTest {
+
+    @Test
+    void sessionReplacementNoticeIsExplicitAndTargetsOnlyTheOldWebSocketSession() {
+        RecordingTemplate template = new RecordingTemplate();
+        GameWebSocketService service = new GameWebSocketService(template);
+
+        service.sendSessionReplaced("alice", "old-ws-session");
+
+        assertEquals("alice", template.user);
+        assertEquals("/queue/session-control", template.userDestination);
+        Map<?, ?> payload = (Map<?, ?>) template.userPayload;
+        assertEquals("SESSION_REPLACED", payload.get("type"));
+        assertEquals("LOGIN_REPLACED", payload.get("reason"));
+        assertEquals("This account was signed in on another device. You have been signed out.",
+                payload.get("message"));
+        assertEquals("old-ws-session",
+                template.userHeaders.get(SimpMessageHeaderAccessor.SESSION_ID_HEADER));
+    }
 
     @Test
     void roomCreatedActivityIsSentOnlyToConnectedUsersOutsideRooms() {
@@ -297,6 +317,7 @@ class GameWebSocketServiceTest {
         private String user;
         private String userDestination;
         private Object userPayload;
+        private MessageHeaders userHeaders;
         private final List<String> users = new ArrayList<>();
         private final List<String> userDestinations = new ArrayList<>();
         private final List<Object> userPayloads = new ArrayList<>();
@@ -316,6 +337,20 @@ class GameWebSocketServiceTest {
             this.user = user;
             this.userDestination = destination;
             this.userPayload = payload;
+            this.users.add(user);
+            this.userDestinations.add(destination);
+            this.userPayloads.add(payload);
+        }
+
+        @Override
+        public void convertAndSendToUser(String user,
+                                         String destination,
+                                         Object payload,
+                                         Map<String, Object> headers) {
+            this.user = user;
+            this.userDestination = destination;
+            this.userPayload = payload;
+            this.userHeaders = new MessageHeaders(headers);
             this.users.add(user);
             this.userDestinations.add(destination);
             this.userPayloads.add(payload);

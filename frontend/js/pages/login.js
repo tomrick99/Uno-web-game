@@ -4,7 +4,9 @@ const apiBase = "/api";
 createApp({
     setup() {
         const isRegister = ref(false);
-        const errorMsg = ref("");
+        const loginNotice = sessionStorage.getItem("loginNotice") || "";
+        sessionStorage.removeItem("loginNotice");
+        const errorMsg = ref(loginNotice);
         const successMsg = ref("");
 
         const loginForm = reactive({ username: "", password: "" });

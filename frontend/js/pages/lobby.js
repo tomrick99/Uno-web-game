@@ -21,6 +21,7 @@ createApp({
         const stompClient = ref(null);
         const lobbySubscription = ref(null);
         const lobbyActivitySubscription = ref(null);
+        const sessionControlSubscription = ref(null);
 
         let reconnectTimer = null;
         let fallbackActivationTimer = null;
@@ -29,6 +30,8 @@ createApp({
         let disconnectedAt = null;
         let isConnecting = false;
         let shouldReconnect = true;
+        let responseInterceptorId = null;
+        let sessionReplacementHandled = false;
 
         const messages = {
             zh: {
@@ -199,6 +202,10 @@ createApp({
                 lobbyActivitySubscription.value.unsubscribe();
                 lobbyActivitySubscription.value = null;
             }
+            if (sessionControlSubscription.value) {
+                sessionControlSubscription.value.unsubscribe();
+                sessionControlSubscription.value = null;
+            }
             if (stompClient.value) {
                 try {
                     if (typeof stompClient.value.deactivate === "function") {
@@ -214,8 +221,31 @@ createApp({
             isConnecting = false;
         };
 
+        const handleSessionReplaced = (payload = {}) => {
+            if (sessionReplacementHandled) return;
+            sessionReplacementHandled = true;
+            shouldReconnect = false;
+            cleanupSocket();
+            stopFallbackPolling();
+            clearReconnectTimer();
+            clearFallbackActivationTimer();
+            localStorage.removeItem("userId");
+            localStorage.removeItem("username");
+            sessionStorage.setItem(
+                "loginNotice",
+                payload.message || "This account was signed in on another device. You have been signed out."
+            );
+            window.location.replace("index.html");
+        };
+
         const subscribeLobbyTopic = () => {
             if (!stompClient.value || !wsConnected.value) return;
+            if (!sessionControlSubscription.value) {
+                sessionControlSubscription.value = stompClient.value.subscribe("/user/queue/session-control", (message) => {
+                    const payload = JSON.parse(message.body || "{}");
+                    if (payload.type === "SESSION_REPLACED") handleSessionReplaced(payload);
+                });
+            }
             if (!lobbySubscription.value) {
                 lobbySubscription.value = stompClient.value.subscribe("/topic/lobby", (message) => {
                 let payload = {};
@@ -364,6 +394,10 @@ createApp({
             try {
                 const res = await axios.get(`${apiBase}/user/me`);
                 if (res.data.code !== 200) {
+                    if (res.data.message?.includes("signed in on another device")) {
+                        handleSessionReplaced(res.data);
+                        return false;
+                    }
                     window.location.href = "index.html";
                     return false;
                 }
@@ -472,6 +506,22 @@ createApp({
 
         onMounted(async () => {
             console.info("[UNO-LOBBY] lobby.js loaded");
+            responseInterceptorId = axios.interceptors.response.use(
+                (response) => {
+                    if (response.data?.code === 401
+                        && response.data?.message?.includes("signed in on another device")) {
+                        handleSessionReplaced(response.data);
+                    }
+                    return response;
+                },
+                (error) => {
+                    if (error.response?.data?.code === 401
+                        && error.response?.data?.message?.includes("signed in on another device")) {
+                        handleSessionReplaced(error.response.data);
+                    }
+                    return Promise.reject(error);
+                }
+            );
             applyLanguage();
             const loggedIn = await checkLogin();
             if (!loggedIn) return;
@@ -490,6 +540,10 @@ createApp({
             if (refreshDebounceTimer) {
                 clearTimeout(refreshDebounceTimer);
                 refreshDebounceTimer = null;
+            }
+            if (responseInterceptorId !== null) {
+                axios.interceptors.response.eject(responseInterceptorId);
+                responseInterceptorId = null;
             }
         });
 

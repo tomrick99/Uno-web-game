@@ -8,6 +8,8 @@ import com.uno.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
+import org.springframework.messaging.simp.SimpMessageType;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.messaging.simp.user.SimpUserRegistry;
 import org.springframework.stereotype.Service;
@@ -21,6 +23,7 @@ public class GameWebSocketService {
     private static final Logger log = LoggerFactory.getLogger(GameWebSocketService.class);
     private static final String LOBBY_TOPIC = "/topic/lobby";
     private static final String LOBBY_ACTIVITY_QUEUE = "/queue/lobby-activity";
+    private static final String SESSION_CONTROL_QUEUE = "/queue/session-control";
 
     private final SimpMessagingTemplate messagingTemplate;
     private final SimpUserRegistry userRegistry;
@@ -186,6 +189,26 @@ public class GameWebSocketService {
             resyncPayload.put("message", "Private state unavailable; refresh snapshot");
             timedSend("/topic/games/" + gameId, resyncPayload, roomId, "RESYNC_REQUIRED");
         }
+    }
+
+    public void sendSessionReplaced(String username, String webSocketSessionId) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("type", "SESSION_REPLACED");
+        payload.put("event", "SESSION_REPLACED");
+        payload.put("reason", "LOGIN_REPLACED");
+        payload.put("message", com.uno.session.ActiveLoginService.REPLACED_MESSAGE);
+        payload.put("timestamp", System.currentTimeMillis());
+
+        SimpMessageHeaderAccessor headers = SimpMessageHeaderAccessor.create(SimpMessageType.MESSAGE);
+        headers.setSessionId(webSocketSessionId);
+        headers.setLeaveMutable(true);
+        messagingTemplate.convertAndSendToUser(
+                username,
+                SESSION_CONTROL_QUEUE,
+                payload,
+                headers.getMessageHeaders()
+        );
+        log.info("[AUTH] session replacement notice user={} wsSessionId={}", username, webSocketSessionId);
     }
 
     private void timedSend(String destination, Object payload, Object roomId, String event) {

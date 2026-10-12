@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ScheduledFuture;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -41,17 +42,31 @@ class GameConnectionEventListenerTest {
     }
 
     @Test
-    void closingOneOfMultipleSessionsDoesNotReportPlayerDisconnected() {
+    void newestSameAccountGameSessionReplacesOldWithoutReportingDisconnect() {
         ListenerFixture fixture = fixture();
         fixture.listener.registerConnectedSession("alice-game-1", "alice");
         fixture.listener.registerConnectedSession("alice-game-2", "alice");
         fixture.listener.registerGameSubscription("alice-game-1");
         fixture.listener.registerGameSubscription("alice-game-2");
 
+        assertEquals(1, fixture.listener.activeGameConnectionCount("alice"),
+                "only the newest same-account game connection may remain active");
+
         fixture.listener.registerDisconnectedSession("alice-game-1");
         fixture.runPendingChecks();
 
         verify(fixture.gameService, never()).playerDisconnected(anyString());
+    }
+
+    @Test
+    void replacingALoginImmediatelyRemovesItsActivePlayerConnection() {
+        ListenerFixture fixture = fixture();
+        fixture.listener.registerConnectedSession("alice-game", "alice", "login-a");
+        fixture.listener.registerGameSubscription("alice-game");
+
+        assertEquals(List.of("alice-game"),
+                fixture.listener.revokeLoginToken("login-a").stream().toList());
+        assertEquals(0, fixture.listener.activeGameConnectionCount("alice"));
     }
 
     @SuppressWarnings("unchecked")
